@@ -13,24 +13,50 @@ import java.util.stream.Collectors;
 @Service
 public class GptService {
 
-    @Value("${openai.api.key}")
+    @Value("${gemini.api.key}")
     private String apiKey;
 
-    @Value("${openai.api.url}")
-    private String apiUrl;
-
-    @Value("${openai.api.model}")
+    @Value("${gemini.api.model}")
     private String model;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    // 기억 추출 전용 GPT 호출
-    public List<String> extractMemories(String name, List<String> candidates) {
+    private String getApiUrl() {
+        return "https://generativelanguage.googleapis.com/v1beta/models/"
+                + model + ":generateContent?key=" + apiKey;
+    }
+
+    // Gemini API 공통 호출
+    private String callGemini(String systemPrompt, List<Map<String, Object>> contents, double temperature, int maxTokens) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(apiKey);
 
-        // 전체 후보 텍스트가 3000자 초과 시 잘라냄 (토큰 한도 방지)
+        Map<String, Object> body = new HashMap<>();
+
+        // system instruction
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            body.put("system_instruction", Map.of(
+                "parts", List.of(Map.of("text", systemPrompt))
+            ));
+        }
+
+        body.put("contents", contents);
+        body.put("generationConfig", Map.of(
+            "temperature", temperature,
+            "maxOutputTokens", maxTokens
+        ));
+
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> response = restTemplate.postForEntity(getApiUrl(), request, Map.class);
+
+        List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.getBody().get("candidates");
+        Map<String, Object> content = (Map<String, Object>) candidates.get(0).get("content");
+        List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
+        return (String) parts.get(0).get("text");
+    }
+
+    // 기억 추출 전용 호출
+    public List<String> extractMemories(String name, List<String> candidates) {
         String candidateText = candidates.stream()
             .map(c -> "- " + c)
             .collect(Collectors.joining("\n"));
@@ -56,24 +82,13 @@ public class GptService {
             %s
             """, name, name, name, name, candidateText);
 
-        List<Map<String, String>> messages = List.of(
-            Map.of("role", "user", "content", prompt)
+        List<Map<String, Object>> contents = List.of(
+            Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))
         );
 
-        Map<String, Object> body = new HashMap<>();
-        body.put("model", model);
-        body.put("messages", messages);
-        body.put("max_tokens", 600);
-        body.put("temperature", 0.3);
-
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-
         try {
-            ResponseEntity<Map> response = restTemplate.postForEntity(apiUrl, request, Map.class);
-            List<Map<String, Object>> choices = (List<Map<String, Object>>) response.getBody().get("choices");
-            String content = (String) ((Map<String, Object>) choices.get(0).get("message")).get("content");
-
-            return Arrays.stream(content.split("\n"))
+            String result = callGemini(null, contents, 0.3, 600);
+            return Arrays.stream(result.split("\n"))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .toList();
@@ -83,42 +98,31 @@ public class GptService {
     }
 
     public String chat(Persona persona, List<ChatMessage> history, String userMessage) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(apiKey);
-
-        List<Map<String, String>> messages = new ArrayList<>();
-
-        // system 프롬프트
-        messages.add(Map.of("role", "system", "content", persona.getSystemPrompt()));
-
-        // 대화 히스토리 (최근 20개)
+        // 대화 히스토리 구성 (최근 20개)
         List<ChatMessage> recent = history.size() > 20
             ? history.subList(history.size() - 20, history.size())
             : history;
+
+        List<Map<String, Object>> contents = new ArrayList<>();
         for (ChatMessage msg : recent) {
-            messages.add(Map.of("role", msg.getRole(), "content", msg.getContent()));
+            // OpenAI "assistant" → Gemini "model"
+            String role = msg.getRole().equals("assistant") ? "model" : "user";
+            contents.add(Map.of(
+                "role", role,
+                "parts", List.of(Map.of("text", msg.getContent()))
+            ));
         }
 
-        // 현재 메시지
-        messages.add(Map.of("role", "user", "content", userMessage));
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("model", model);
-        body.put("messages", messages);
-        body.put("max_tokens", 200);
-        body.put("temperature", 0.75);
-
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+        // 현재 사용자 메시지
+        contents.add(Map.of(
+            "role", "user",
+            "parts", List.of(Map.of("text", userMessage))
+        ));
 
         try {
-            ResponseEntity<Map> response = restTemplate.postForEntity(apiUrl, request, Map.class);
-            List<Map<String, Object>> choices = (List<Map<String, Object>>) response.getBody().get("choices");
-            Map<String, Object> choice = choices.get(0);
-            Map<String, String> message = (Map<String, String>) choice.get("message");
-            return message.get("content");
+            return callGemini(persona.getSystemPrompt(), contents, 0.75, 200);
         } catch (Exception e) {
-            throw new RuntimeException("GPT API 호출 실패: " + e.getMessage());
+            throw new RuntimeException("Gemini API 호출 실패: " + e.getMessage());
         }
     }
 }
