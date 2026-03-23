@@ -49,9 +49,25 @@ public class GptService {
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
         ResponseEntity<Map> response = restTemplate.postForEntity(getApiUrl(), request, Map.class);
 
-        List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.getBody().get("candidates");
-        Map<String, Object> content = (Map<String, Object>) candidates.get(0).get("content");
+        Map responseBody = response.getBody();
+        if (responseBody == null) throw new RuntimeException("Gemini 응답 없음");
+
+        List<Map<String, Object>> candidates = (List<Map<String, Object>>) responseBody.get("candidates");
+        if (candidates == null || candidates.isEmpty()) {
+            // 안전 필터 차단 시 promptFeedback 확인
+            Object feedback = responseBody.get("promptFeedback");
+            throw new RuntimeException("Gemini 응답 차단됨: " + feedback);
+        }
+
+        Map<String, Object> candidate = candidates.get(0);
+        String finishReason = (String) candidate.get("finishReason");
+
+        Map<String, Object> content = (Map<String, Object>) candidate.get("content");
+        if (content == null) throw new RuntimeException("Gemini content null (finishReason: " + finishReason + ")");
+
         List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
+        if (parts == null || parts.isEmpty()) throw new RuntimeException("Gemini parts 비어있음");
+
         return (String) parts.get(0).get("text");
     }
 
