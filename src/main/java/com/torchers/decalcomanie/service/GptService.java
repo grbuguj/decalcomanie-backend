@@ -22,7 +22,7 @@ public class GptService {
     private final RestTemplate restTemplate = new RestTemplate();
 
     private String getApiUrl() {
-        return "https://generativelanguage.googleapis.com/v1beta/models/"
+        return "https://generativelanguage.googleapis.com/v1/models/"
                 + model + ":generateContent?key=" + apiKey;
     }
 
