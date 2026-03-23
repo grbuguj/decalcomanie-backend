@@ -22,7 +22,7 @@ public class GptService {
     private final RestTemplate restTemplate = new RestTemplate();
 
     private String getApiUrl() {
-        return "https://generativelanguage.googleapis.com/v1/models/"
+        return "https://generativelanguage.googleapis.com/v1beta/models/"
                 + model + ":generateContent?key=" + apiKey;
     }
 
@@ -104,7 +104,7 @@ public class GptService {
         );
 
         try {
-            String result = callGemini(null, contents, 0.3, 600);
+            String result = callGemini(null, contents, 0.3, 1000);
             return Arrays.stream(result.split("\n"))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
