@@ -12,7 +12,6 @@ import java.util.*;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
-@CrossOrigin(origins = {"http://localhost:3000", "https://*.vercel.app"})
 public class DecalcomanieController {
 
     private final KakaoParserService parserService;
