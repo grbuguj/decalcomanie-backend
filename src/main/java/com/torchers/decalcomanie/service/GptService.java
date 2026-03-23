@@ -107,6 +107,7 @@ public class GptService {
             String result = callGemini(null, contents, 0.3, 1000);
             return Arrays.stream(result.split("\n"))
                 .map(String::trim)
+                .map(s -> s.replaceAll("^[*\\-•·]\\s*", ""))  // 마크다운 bullet 제거
                 .filter(s -> !s.isEmpty())
                 .toList();
         } catch (Exception e) {
