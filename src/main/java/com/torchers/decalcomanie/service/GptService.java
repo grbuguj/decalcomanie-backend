@@ -176,7 +176,7 @@ public class GptService {
         String systemPrompt = persona.getSystemPrompt()
             + "\n\n" + buildTimeContext();
         if (nickname != null && !nickname.isBlank()) {
-            systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 자연스럽게 불러도 돼.";
+            systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 이름은 거의 부르지 마. 진짜 필요할 때만.";
         }
         List<Map<String, Object>> contents = List.of(
             Map.of("role", "user", "parts", List.of(Map.of("text",
@@ -211,7 +211,7 @@ public class GptService {
         String systemPrompt = persona.getSystemPrompt()
             + "\n\n" + buildTimeContext();
         if (nickname != null && !nickname.isBlank()) {
-            systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 대화에서 자연스럽게 불러.";
+            systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 이름은 거의 부르지 마. 진짜 필요할 때(강조, 놀람, 오해 풀 때)만 가끔 써.";
         }
 
         // 주제별 RAG: 미리 인덱싱된 topic exchanges에서 관련 대화 주입
