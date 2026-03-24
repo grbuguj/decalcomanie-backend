@@ -402,14 +402,17 @@ public class PersonaAnalysisService {
             collectEvents(targetName, window800, eventKeywords, 10, candidates);
         }
 
+        // 최근 발화 샘플 — 의미있는 문장만 (단편 제외)
         List<String> myMessages = allMessages.getOrDefault(targetName, List.of());
         int size = myMessages.size();
         List<String> recentMy = myMessages.subList(Math.max(0, size - 1000), size).stream()
-            .filter(m -> m.length() >= 5 && m.length() <= 60)
+            .filter(m -> m.length() >= 10 && m.length() <= 80)  // 10자 이상만
             .filter(m -> !m.startsWith("http"))
+            .filter(m -> !m.matches("^[ㄱ-ㅎㅏ-ㅣ\\s]+$"))      // 자음/모음만으론 안 됨
+            .filter(m -> m.chars().filter(c -> c >= '가' && c <= '힣').count() >= 3) // 한글 3자 이상
             .collect(Collectors.toList());
         int mySize = recentMy.size();
-        recentMy.subList(Math.max(0, mySize - 20), mySize).stream()
+        recentMy.subList(Math.max(0, mySize - 15), mySize).stream()
             .map(m -> targetName + ": " + m)
             .forEach(candidates::add);
 
@@ -423,7 +426,9 @@ public class PersonaAnalysisService {
             ConversationTurn turn = turns.get(i);
             String msg = turn.getMessage();
             boolean hasKeyword = Arrays.stream(keywords).anyMatch(msg::contains);
-            if (!hasKeyword || msg.length() > 80) continue;
+            if (!hasKeyword || msg.length() < 8 || msg.length() > 80) continue;
+            // 자음/모음만인 단편 제외
+            if (msg.chars().filter(c -> c >= '가' && c <= '힣').count() < 4) continue;
 
             StringBuilder ctx = new StringBuilder();
             // 날짜 헤더 포함 (있으면)
@@ -533,16 +538,37 @@ public class PersonaAnalysisService {
         String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
         String mbtiStyle = mbtiToConversationStyle(mbti);
 
-        // ① 상황별 대화 예시 — 가장 먼저, 가장 많이 (카테고리당 최대 8개)
+        // ① 상황별 대화 예시 — 이 사람 응답이 긴 것(알차 예시) 우선 정렬 후 추출
+        List<String> allPairs = situationalPairs.values().stream()
+            .flatMap(List::stream)
+            .sorted((a, b) -> {
+                // 페르소나 응답 줄(마지막 줄) 길이 기준 내림차순
+                String lastA = a.contains("\n") ? a.substring(a.lastIndexOf('\n') + 1) : a;
+                String lastB = b.contains("\n") ? b.substring(b.lastIndexOf('\n') + 1) : b;
+                return Integer.compare(lastB.length(), lastA.length());
+            })
+            .collect(Collectors.toList());
+
         StringBuilder pairsBuilder = new StringBuilder();
-        for (Map.Entry<String, List<String>> entry : situationalPairs.entrySet()) {
-            List<String> list = entry.getValue();
-            if (list.isEmpty()) continue;
-            list.stream().limit(8).forEach(p -> pairsBuilder.append(p).append("\n\n"));
-        }
-        // 최근 메시지 샘플도 예시로 추가
+        // 알찬 예시(페르소나 응답 10자 이상) 최대 20개 먼저
+        allPairs.stream()
+            .filter(p -> {
+                String last = p.contains("\n") ? p.substring(p.lastIndexOf('\n') + 1) : p;
+                return last.length() >= 10;
+            })
+            .limit(20)
+            .forEach(p -> pairsBuilder.append(p).append("\n\n"));
+        // 나머지 짧은 예시 최대 12개
+        allPairs.stream()
+            .filter(p -> {
+                String last = p.contains("\n") ? p.substring(p.lastIndexOf('\n') + 1) : p;
+                return last.length() < 10;
+            })
+            .limit(12)
+            .forEach(p -> pairsBuilder.append(p).append("\n\n"));
+        // 최근 메시지 샘플 10개
         recentSamples.stream().limit(10)
-            .forEach(m -> pairsBuilder.append("(최근 발화) ").append(name).append(": ").append(m).append("\n"));
+            .forEach(m -> pairsBuilder.append(name).append(": ").append(m).append("\n"));
         String examplesText = pairsBuilder.length() == 0 ? "(예시 없음)" : pairsBuilder.toString().trim();
 
         // ② 기억
@@ -553,7 +579,7 @@ public class PersonaAnalysisService {
             너는 '%s'야. 지금부터 그 사람 그 자체로 대화해.
 
             ══ 이 사람의 실제 대화 ══
-            (아래가 전부야. 이렇게 말하는 사람이야. 말투·길이·반응 전부 그대로 따라해.)
+            (아래가 핵심이야. 이 사람이 실제로 어떻게 말하는지 — 에너지, 말투, 길이 전부 그대로.)
 
             %s
 
@@ -566,15 +592,16 @@ public class PersonaAnalysisService {
             성격(MBTI %s): %s
 
             ══ 출력 형식 (필수) ══
-            카카오톡처럼 메시지를 1~4개로 나눠서 |||로 구분해 출력해.
-            - 한 줄로만 출력, 줄바꿈 없이
-            - 예: "ㅋㅋ 진짜?|||나도 그런 적 있었는데|||그거 어떻게 됐어"
-            - 짧아도 돼, 그 사람이 원래 짧게 말하면 짧게
+            카카오톡처럼 메시지를 1~3개로 나눠서 |||로 구분해 출력해.
+            한 줄로만, 줄바꿈 없이.
+            예: "ㅋㅋ 진짜?|||나도 그런 적 있는데 솔직히|||어떻게 됐어 그래서"
 
             ══ 핵심 규칙 ══
-            1. 위 실제 대화처럼만 말해. 말투·반응·길이 전부 그대로.
-            2. AI가 아니야. 설명하거나 도우려 하지 마.
-            3. 3번에 1번은 역질문 던져. ("근데 너는?", "그거 어떻게 됐어?" 등)
+            1. 위 실제 대화처럼만 말해. AI처럼 설명하거나 도우려 하지 마.
+            2. 대화 흐름: 리액션 → 자기 얘기 → (가끔) 역질문.
+               매번 질문으로 끝내지 마. 자기 얘기도 해.
+               예: "ㅋㅋ 나도 그런데" / "아 갑자기 생각났는데" / "진짜? 나는~"
+            3. 역질문은 자연스러울 때만. 억지로 넣지 마.
             """,
             name,
             examplesText,
