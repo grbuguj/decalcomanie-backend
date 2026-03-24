@@ -156,10 +156,13 @@ public class GptService {
             """, name, candidateText, name);
     }
 
-    public String greet(Persona persona) {
+    public String greet(Persona persona, String nickname) {
+        String nicknameHint = (nickname != null && !nickname.isBlank())
+            ? " 상대방 이름은 '" + nickname + "'이야. 자연스럽게 불러도 돼."
+            : "";
         List<Map<String, Object>> contents = List.of(
             Map.of("role", "user", "parts", List.of(Map.of("text",
-                "대화 시작. 상대방에게 먼저 짧게 한두 마디로 자연스럽게 말 걸어. 그 사람 말투 그대로.")))
+                "대화 시작. 상대방에게 먼저 짧게 한두 마디로 자연스럽게 말 걸어. 그 사람 말투 그대로." + nicknameHint)))
         );
         try {
             return callGemini(persona.getSystemPrompt(), contents, 0.85, 1200);
@@ -169,7 +172,7 @@ public class GptService {
     }
 
     public String chat(Persona persona, List<ChatMessage> history, String userMessage,
-                       List<ConversationTurn> allTurns) {
+                       String nickname, List<ConversationTurn> allTurns) {
         List<ChatMessage> recent = history.size() > 20
             ? history.subList(history.size() - 20, history.size())
             : history;
@@ -187,8 +190,13 @@ public class GptService {
             "parts", List.of(Map.of("text", userMessage))
         ));
 
-        // RAG: 현재 메시지 키워드로 관련 과거 대화 검색 → 시스템 프롬프트에 동적 주입
+        // 닉네임 → 시스템 프롬프트에 추가
         String systemPrompt = persona.getSystemPrompt();
+        if (nickname != null && !nickname.isBlank()) {
+            systemPrompt += "\n\n상대방 이름은 '" + nickname + "'이야. 대화에서 자연스럽게 불러.";
+        }
+
+        // RAG: 현재 메시지 키워드로 관련 과거 대화 검색 → 시스템 프롬프트에 동적 주입
         if (allTurns != null && !allTurns.isEmpty()) {
             String ragContext = buildRagContext(persona.getName(), userMessage, allTurns);
             if (!ragContext.isBlank()) {

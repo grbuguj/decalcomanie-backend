@@ -89,11 +89,12 @@ public class DecalcomanieController {
     @PostMapping("/greet")
     public ResponseEntity<?> greet(@RequestBody Map<String, String> body) {
         String sessionId = body.get("sessionId");
+        String nickname = body.getOrDefault("nickname", "");
         SessionData session = sessionStore.getSession(sessionId);
         if (session == null) return ResponseEntity.badRequest().body(Map.of("error", "세션 없음"));
 
         try {
-            String greeting = gptService.greet(session.getPersona());
+            String greeting = gptService.greet(session.getPersona(), nickname);
             session.getHistory().add(new ChatMessage("assistant", greeting));
             return ResponseEntity.ok(Map.of("message", greeting));
         } catch (Exception e) {
@@ -112,11 +113,13 @@ public class DecalcomanieController {
             return ResponseEntity.badRequest().body(Map.of("error", "세션이 만료되었습니다. 처음부터 다시 시작해주세요."));
         }
 
+        String nickname = body.getOrDefault("nickname", "");
+
         // RAG용 전체 turns 가져오기 (parsedChat은 upload 시 저장됨)
         var parsedChat = sessionStore.getParsedChat(sessionId);
         var allTurns = parsedChat != null ? parsedChat.getOrderedTurns() : null;
 
-        String aiResponse = gptService.chat(session.getPersona(), session.getHistory(), userMessage, allTurns);
+        String aiResponse = gptService.chat(session.getPersona(), session.getHistory(), userMessage, nickname, allTurns);
 
         session.getHistory().add(new ChatMessage("user", userMessage));
         session.getHistory().add(new ChatMessage("assistant", aiResponse));
