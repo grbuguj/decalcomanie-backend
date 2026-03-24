@@ -209,13 +209,7 @@ public class GptService {
         String systemPrompt = persona.getSystemPrompt()
             + "\n\n" + buildTimeContext();
 
-        // 주제별 RAG: 미리 인덱싱된 topic exchanges에서 관련 대화 주입
-        if (persona.getTopicExchanges() != null && !persona.getTopicExchanges().isEmpty()) {
-            String topicCtx = buildTopicContext(userMessage, persona.getTopicExchanges());
-            if (!topicCtx.isBlank()) {
-                systemPrompt += "\n\n[과거 대화 참고 — 맥락 파악용. 이 내용을 직접 꺼내거나 언급하지 마. 상대가 먼저 꺼낼 때만 반응.]\n" + topicCtx;
-            }
-        }
+        // RAG 비활성화 — 맥락없는 발언/개인정보 노출 원인, 추후 의미기반 검색으로 대체
 
         try {
             return callGemini(systemPrompt, contents, 0.75, 1200);

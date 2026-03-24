@@ -31,6 +31,8 @@ public class KakaoParserService {
 
     private static final Pattern PHONE_PATTERN =
         Pattern.compile("\\d{3}-\\d{3,4}-\\d{4}");
+    private static final Pattern ADDRESS_PATTERN =
+        Pattern.compile("[가-힣]+(시|도|구|군)\\s[가-힣0-9\\s]+(로|길|동|가)\\s*\\d+[가-힣0-9\\-\\s]*");
 
     // (구 DATE_PATTERN 대체됨 — CSV_DATE_PATTERN 사용)
 
@@ -158,7 +160,9 @@ public class KakaoParserService {
     }
 
     private String maskSensitiveInfo(String message) {
-        return PHONE_PATTERN.matcher(message).replaceAll("***-****-****");
+        String masked = PHONE_PATTERN.matcher(message).replaceAll("***-****-****");
+        masked = ADDRESS_PATTERN.matcher(masked).replaceAll("[주소]");
+        return masked;
     }
 
     private boolean isSkippable(String message) {
