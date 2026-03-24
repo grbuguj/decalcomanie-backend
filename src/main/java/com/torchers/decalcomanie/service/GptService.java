@@ -1,6 +1,7 @@
 package com.torchers.decalcomanie.service;
 
 import com.torchers.decalcomanie.model.ChatMessage;
+import com.torchers.decalcomanie.model.ConversationTurn;
 import com.torchers.decalcomanie.model.Persona;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -8,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -153,32 +156,106 @@ public class GptService {
             """, name, candidateText, name);
     }
 
-    public String chat(Persona persona, List<ChatMessage> history, String userMessage) {
-        // 대화 히스토리 구성 (최근 20개)
+    public String greet(Persona persona) {
+        List<Map<String, Object>> contents = List.of(
+            Map.of("role", "user", "parts", List.of(Map.of("text",
+                "대화 시작. 상대방에게 먼저 짧게 한두 마디로 자연스럽게 말 걸어. 그 사람 말투 그대로.")))
+        );
+        try {
+            return callGemini(persona.getSystemPrompt(), contents, 0.85, 1200);
+        } catch (Exception e) {
+            return "ㅇㅇ";
+        }
+    }
+
+    public String chat(Persona persona, List<ChatMessage> history, String userMessage,
+                       List<ConversationTurn> allTurns) {
         List<ChatMessage> recent = history.size() > 20
             ? history.subList(history.size() - 20, history.size())
             : history;
 
         List<Map<String, Object>> contents = new ArrayList<>();
         for (ChatMessage msg : recent) {
-            // OpenAI "assistant" → Gemini "model"
             String role = msg.getRole().equals("assistant") ? "model" : "user";
             contents.add(Map.of(
                 "role", role,
                 "parts", List.of(Map.of("text", msg.getContent()))
             ));
         }
-
-        // 현재 사용자 메시지
         contents.add(Map.of(
             "role", "user",
             "parts", List.of(Map.of("text", userMessage))
         ));
 
+        // RAG: 현재 메시지 키워드로 관련 과거 대화 검색 → 시스템 프롬프트에 동적 주입
+        String systemPrompt = persona.getSystemPrompt();
+        if (allTurns != null && !allTurns.isEmpty()) {
+            String ragContext = buildRagContext(persona.getName(), userMessage, allTurns);
+            if (!ragContext.isBlank()) {
+                systemPrompt += "\n\n[지금 대화와 관련된 과거 실제 대화 — 자연스럽게 참고해]\n"
+                    + ragContext;
+            }
+        }
+
         try {
-            return callGemini(persona.getSystemPrompt(), contents, 0.75, 1200);
+            return callGemini(systemPrompt, contents, 0.75, 1200);
         } catch (Exception e) {
             throw new RuntimeException("Gemini API 호출 실패: " + e.getMessage());
         }
+    }
+
+    // ── RAG: 키워드 기반 과거 대화 검색 ───────────────────
+
+    private String buildRagContext(String name, String userMessage, List<ConversationTurn> turns) {
+        List<String> keywords = extractKeywords(userMessage);
+        if (keywords.isEmpty()) return "";
+
+        // 각 turn에 키워드 점수 매기기
+        Map<Integer, Integer> scores = new HashMap<>();
+        for (int i = 0; i < turns.size(); i++) {
+            String msg = turns.get(i).getMessage();
+            int score = 0;
+            for (String kw : keywords) {
+                if (msg.contains(kw)) score++;
+            }
+            if (score > 0) scores.put(i, score);
+        }
+
+        if (scores.isEmpty()) return "";
+
+        // 점수 높은 top 3, ±2턴 컨텍스트 붙여서 반환
+        return scores.entrySet().stream()
+            .sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed())
+            .limit(3)
+            .map(e -> {
+                int idx = e.getKey();
+                StringBuilder ctx = new StringBuilder();
+                for (int j = Math.max(0, idx - 2); j <= Math.min(turns.size() - 1, idx + 2); j++) {
+                    ConversationTurn t = turns.get(j);
+                    String msg = t.getMessage().length() > 60
+                        ? t.getMessage().substring(0, 60) + ".."
+                        : t.getMessage();
+                    ctx.append(t.getSender()).append(": ").append(msg).append("\n");
+                }
+                return ctx.toString().trim();
+            })
+            .collect(java.util.stream.Collectors.joining("\n---\n"));
+    }
+
+    private static final Set<String> STOP_WORDS = Set.of(
+        "이야", "나는", "우리", "그게", "이게", "뭐야", "어디", "지금", "그냥",
+        "진짜", "이거", "그거", "이런", "그런", "어떤", "되게", "너무", "정말",
+        "있어", "없어", "해줘", "할게", "한거", "하는", "하고", "해서", "했어",
+        "근데", "그리고", "그래서", "하지만", "아니", "맞아", "그럼", "그래"
+    );
+
+    private List<String> extractKeywords(String text) {
+        List<String> words = new ArrayList<>();
+        Matcher m = Pattern.compile("[가-힣]{2,}").matcher(text);
+        while (m.find()) {
+            String w = m.group();
+            if (!STOP_WORDS.contains(w)) words.add(w);
+        }
+        return words;
     }
 }

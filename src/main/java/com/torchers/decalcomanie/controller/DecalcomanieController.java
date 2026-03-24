@@ -75,12 +75,33 @@ public class DecalcomanieController {
         personaMap.put("avgMessageLength", persona.getAvgMessageLength());
         personaMap.put("commonPhrases", persona.getCommonPhrases());
         personaMap.put("endingPatterns", persona.getEndingPatterns());
+        personaMap.put("endingStyle", persona.getEndingStyle());
+        personaMap.put("typingHabits", persona.getTypingHabits());
+        personaMap.put("burstPattern", persona.getBurstPattern());
+        personaMap.put("topics", persona.getTopics());
         personaMap.put("memories", persona.getMemories());
+        personaMap.put("mbti", persona.getMbti());
 
         return ResponseEntity.ok(Map.of("sessionId", sessionId, "persona", personaMap));
     }
 
-    // 3. 채팅
+    // 3. 첫 인사 생성
+    @PostMapping("/greet")
+    public ResponseEntity<?> greet(@RequestBody Map<String, String> body) {
+        String sessionId = body.get("sessionId");
+        SessionData session = sessionStore.getSession(sessionId);
+        if (session == null) return ResponseEntity.badRequest().body(Map.of("error", "세션 없음"));
+
+        try {
+            String greeting = gptService.greet(session.getPersona());
+            session.getHistory().add(new ChatMessage("assistant", greeting));
+            return ResponseEntity.ok(Map.of("message", greeting));
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("message", "..."));
+        }
+    }
+
+    // 4. 채팅
     @PostMapping("/chat")
     public ResponseEntity<?> chat(@RequestBody Map<String, String> body) {
         String sessionId = body.get("sessionId");
@@ -91,9 +112,12 @@ public class DecalcomanieController {
             return ResponseEntity.badRequest().body(Map.of("error", "세션이 만료되었습니다. 처음부터 다시 시작해주세요."));
         }
 
-        String aiResponse = gptService.chat(session.getPersona(), session.getHistory(), userMessage);
+        // RAG용 전체 turns 가져오기 (parsedChat은 upload 시 저장됨)
+        var parsedChat = sessionStore.getParsedChat(sessionId);
+        var allTurns = parsedChat != null ? parsedChat.getOrderedTurns() : null;
 
-        // 히스토리에 추가
+        String aiResponse = gptService.chat(session.getPersona(), session.getHistory(), userMessage, allTurns);
+
         session.getHistory().add(new ChatMessage("user", userMessage));
         session.getHistory().add(new ChatMessage("assistant", aiResponse));
 

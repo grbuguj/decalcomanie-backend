@@ -24,20 +24,25 @@ public class PersonaAnalysisService {
         if (myMessages == null || myMessages.isEmpty())
             throw new IllegalArgumentException("메시지가 없습니다.");
 
-        String speechStyle   = detectSpeechStyle(myMessages);
-        String avgLength     = detectAvgLength(myMessages);
-        List<String> phrases = extractCommonPhrases(myMessages);
-        String endings       = detectEndingPatterns(myMessages);
-        String reactionStyle = detectReactionStyle(myMessages);
-        String emotionStyle  = detectEmotionStyle(myMessages);
+        String speechStyle    = detectSpeechStyle(myMessages);
+        String avgLength      = detectAvgLength(myMessages);
+        List<String> phrases  = extractCommonPhrases(myMessages);
+        String endings        = detectEndingPatterns(myMessages);      // 짧은 태그
+        String endingStyle    = detectEndingStyle(myMessages);         // 상세 종결어미
+        String typingHabits   = detectTypingHabits(myMessages);        // 오타/ㅋ 패턴
+        String burstPattern   = detectBurstPattern(name, orderedTurns);
+        List<String> topics   = detectTopics(myMessages);
+        String reactionStyle  = detectReactionStyle(myMessages);
+        String emotionStyle   = detectEmotionStyle(myMessages);
 
-        // 대화 쌍 추출 (핵심 개선)
-        List<String> conversationPairs = extractConversationPairs(name, orderedTurns);
+        // 상황별 대화 쌍 분류
+        Map<String, List<String>> situationalPairs =
+            classifyPairsBySituation(name, orderedTurns);
 
-        // 최근 가중 샘플 (최신 대화일수록 중요)
+        // 최근 가중 샘플
         List<String> recentSamples = extractRecentWeightedSamples(myMessages);
 
-        // 기억 추출 (2단계 GPT)
+        // 기억 추출 (Gemini)
         List<String> candidates = collectCandidates(name, allMessages, orderedTurns);
         List<String> memories = candidates.isEmpty() ? List.of()
             : gptService.extractMemories(name, candidates);
@@ -47,9 +52,12 @@ public class PersonaAnalysisService {
         boolean isGemini = modelName != null && modelName.toLowerCase().contains("gemini");
         String systemPrompt = isGemini
             ? buildGeminiSystemPrompt(name, speechStyle, avgLength, phrases, endings,
-                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories, mbti)
+                endingStyle, typingHabits, burstPattern, topics,
+                reactionStyle, emotionStyle, situationalPairs, recentSamples, memories, mbti)
             : buildSystemPrompt(name, speechStyle, avgLength, phrases, endings,
-                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories, mbti);
+                reactionStyle, emotionStyle,
+                situationalPairs.values().stream().flatMap(List::stream).collect(Collectors.toList()),
+                recentSamples, memories, mbti);
 
         return Persona.builder()
             .name(name)
@@ -57,13 +65,17 @@ public class PersonaAnalysisService {
             .avgMessageLength(avgLength)
             .commonPhrases(phrases)
             .endingPatterns(endings)
+            .endingStyle(endingStyle)
+            .typingHabits(typingHabits)
+            .burstPattern(burstPattern)
+            .topics(topics)
             .memories(memories)
             .mbti(mbti)
             .systemPrompt(systemPrompt)
             .build();
     }
 
-    // ── 말투 분석 ──────────────────────────────────────────
+    // ── 기본 말투 분석 ──────────────────────────────────────
 
     private String detectSpeechStyle(List<String> messages) {
         long honorific = messages.stream()
@@ -108,6 +120,172 @@ public class PersonaAnalysisService {
         return patterns.isEmpty() ? "특별한 패턴 없음" : String.join(", ", patterns);
     }
 
+    // ── 신규: 종결어미 상세 분포 ────────────────────────────
+
+    private String detectEndingStyle(List<String> messages) {
+        // (어미 → 설명) 순서대로
+        String[][] endingDefs = {
+            {"ㄴ데", "~ㄴ데"},  {"는데", "~는데"}, {"잖아", "~잖아"},
+            {"거든", "~거든"}, {"이야", "~이야"},  {"이야", "~야"},
+            {"함", "~함"},     {"임", "~임"},      {"ㄹ듯", "~ㄹ듯"},
+            {"지", "~지"},     {"네", "~네"},      {"나", "~나"},
+            {"구나", "~구나"}, {"라", "~라"},      {"어", "~어"},
+        };
+
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (String[] def : endingDefs) {
+            String ending = def[0];
+            String label  = def[1];
+            long cnt = messages.stream().filter(m -> m.endsWith(ending)).count();
+            if (cnt >= 3) counts.merge(label, cnt, Long::sum);
+        }
+
+        if (counts.isEmpty()) return "특정 종결어미 패턴 없음";
+
+        return counts.entrySet().stream()
+            .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+            .limit(5)
+            .map(e -> e.getKey() + " " + e.getValue() + "회")
+            .collect(Collectors.joining(", "));
+    }
+
+    // ── 신규: 오타/축약/타이핑 습관 ─────────────────────────
+
+    private String detectTypingHabits(List<String> messages) {
+        int total = messages.size();
+        List<String> habits = new ArrayList<>();
+
+        // ㅋ 분포
+        long oneOrTwo = messages.stream()
+            .filter(m -> (m.contains("ㅋㅋ") && !m.contains("ㅋㅋㅋ")) || (m.contains("ㅋ") && !m.contains("ㅋㅋ")))
+            .count();
+        long manyK = messages.stream().filter(m -> m.contains("ㅋㅋㅋ")).count();
+        if (manyK > total * 0.1) habits.add("ㅋ을 3개 이상 연속으로 씀");
+        else if (oneOrTwo > total * 0.1) habits.add("ㅋ을 1-2개 씀");
+
+        // 줄임 자음
+        if (messages.stream().filter(m -> m.contains("ㄱㅅ")).count() > total * 0.02) habits.add("'ㄱㅅ' 씀");
+        if (messages.stream().filter(m -> m.contains("ㅂㅇ")).count() > total * 0.02) habits.add("'ㅂㅇ' 씀");
+        if (messages.stream().filter(m -> m.contains("ㄷㄷ")).count() > total * 0.02) habits.add("'ㄷㄷ' 씀");
+        if (messages.stream().filter(m -> m.contains("ㅇㅋ")).count() > total * 0.03) habits.add("'ㅇㅋ' 씀");
+        if (messages.stream().filter(m -> m.contains("ㅇㅇ")).count() > total * 0.05) habits.add("'ㅇㅇ' 씀");
+
+        // 오타 패턴
+        if (messages.stream().filter(m -> m.contains("됬")).count() > 2) habits.add("'됬' 사용 (됐의 오타)");
+        if (messages.stream().filter(m -> m.contains("않")).count() > total * 0.03) {
+            long incorrectAn = messages.stream()
+                .filter(m -> m.contains("않해") || m.contains("않됨") || m.contains("않음"))
+                .count();
+            if (incorrectAn > 1) habits.add("'않' 오용 경향");
+        }
+
+        // 문장부호 여부
+        long withPunct = messages.stream()
+            .filter(m -> m.endsWith(".") || m.endsWith("!") || m.endsWith("?"))
+            .count();
+        if (withPunct < total * 0.05) habits.add("문장부호 거의 안 씀");
+        else if (withPunct > total * 0.4) habits.add("문장부호 자주 씀");
+
+        // 이모티콘/특수문자
+        if (messages.stream().filter(m -> m.contains("ㅎ")).count() > total * 0.08) habits.add("'ㅎㅎ' 계열 씀");
+
+        return habits.isEmpty() ? "특별한 습관 없음" : String.join(", ", habits);
+    }
+
+    // ── 신규: 연속 버블 패턴 ────────────────────────────────
+
+    private String detectBurstPattern(String name, List<ConversationTurn> turns) {
+        if (turns == null || turns.isEmpty()) return "대체로 1개씩 보냄";
+
+        List<Integer> bursts = new ArrayList<>();
+        int current = 0;
+        for (ConversationTurn t : turns) {
+            if (t.getSender().equals(name)) {
+                current++;
+            } else {
+                if (current > 0) { bursts.add(current); current = 0; }
+            }
+        }
+        if (current > 0) bursts.add(current);
+        if (bursts.isEmpty()) return "대체로 1개씩 보냄";
+
+        double avg = bursts.stream().mapToInt(i -> i).average().orElse(1.0);
+        long multi = bursts.stream().filter(b -> b >= 3).count();
+        long total = bursts.size();
+
+        if (avg >= 2.5)
+            return String.format("연속으로 보내는 편 (평균 %.1f개, %d번 중 %d번이 3개 이상)", avg, total, multi);
+        if (avg >= 1.7)
+            return String.format("가끔 연속으로 보냄 (평균 %.1f개)", avg);
+        return "대체로 1개씩 보냄";
+    }
+
+    // ── 신규: 주제/관심사 감지 ──────────────────────────────
+
+    private List<String> detectTopics(List<String> messages) {
+        int total = messages.size();
+        Map<String, String[]> topicMap = new LinkedHashMap<>();
+        topicMap.put("음식/맛집", new String[]{"밥", "먹었", "먹자", "식당", "카페", "커피", "맛있", "치킨", "라면", "배고"});
+        topicMap.put("공부/학교", new String[]{"시험", "과제", "수업", "학교", "교수", "공부", "성적", "강의", "레포트"});
+        topicMap.put("일/직장", new String[]{"회사", "업무", "일하", "퇴근", "출근", "회의", "야근", "프로젝트"});
+        topicMap.put("운동/건강", new String[]{"운동", "헬스", "달리기", "다이어트", "아프", "병원", "헬스장"});
+        topicMap.put("게임", new String[]{"게임", "롤", "배그", "스팀", "플레이", "랭크", "졌", "이겼"});
+        topicMap.put("드라마/영화", new String[]{"드라마", "영화", "넷플", "봤어", "재밌었", "시즌"});
+        topicMap.put("음악", new String[]{"노래", "음악", "플리", "앨범", "콘서트", "유튜브"});
+        topicMap.put("여행/외출", new String[]{"여행", "갔다", "다녀왔", "구경", "놀러", "여기 왔"});
+
+        List<String> result = new ArrayList<>();
+        for (Map.Entry<String, String[]> entry : topicMap.entrySet()) {
+            String[] kws = entry.getValue();
+            long cnt = messages.stream()
+                .filter(m -> Arrays.stream(kws).anyMatch(m::contains))
+                .count();
+            if (cnt >= Math.max(3, total * 0.03)) result.add(entry.getKey());
+        }
+        return result;
+    }
+
+    // ── 신규: 상황별 대화 쌍 분류 ──────────────────────────
+
+    private Map<String, List<String>> classifyPairsBySituation(String name, List<ConversationTurn> turns) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        result.put("일상 수다", new ArrayList<>());
+        result.put("계획/약속", new ArrayList<>());
+        result.put("감정/진지", new ArrayList<>());
+        result.put("거절/부정", new ArrayList<>());
+
+        if (turns == null) return result;
+
+        for (int i = 1; i < turns.size(); i++) {
+            ConversationTurn cur = turns.get(i);
+            if (!cur.getSender().equals(name)) continue;
+            ConversationTurn prev = turns.get(i - 1);
+            if (prev.getSender().equals(name)) continue;
+
+            String pair = prev.getSender() + ": " + prev.getMessage()
+                + "\n" + name + ": " + cur.getMessage();
+            String lower = pair;
+
+            if (containsAny(lower, "언제", "몇 시", "갈까", "어디서", "약속", "시간", "몇시")) {
+                result.get("계획/약속").add(pair);
+            } else if (containsAny(lower, "힘들", "걱정", "사실", "솔직", "미안", "보고싶", "울", "속상")) {
+                result.get("감정/진지").add(pair);
+            } else if (containsAny(lower, "됐어", "몰라", "싫어", "아니", "ㄴㄴ", "별로", "안 함", "모르겠")) {
+                result.get("거절/부정").add(pair);
+            } else {
+                result.get("일상 수다").add(pair);
+            }
+        }
+        return result;
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        for (String kw : keywords) if (text.contains(kw)) return true;
+        return false;
+    }
+
+    // ── 반응/감정 스타일 ────────────────────────────────────
+
     private String detectReactionStyle(List<String> messages) {
         long question = messages.stream().filter(m -> m.contains("?")).count();
         long empathy  = messages.stream().filter(m ->
@@ -132,43 +310,7 @@ public class PersonaAnalysisService {
         return "감정 표현 무덤덤한 편";
     }
 
-    // ── 대화 쌍 추출 (핵심) ────────────────────────────────
-    // 상대방 말 + 타겟 반응을 쌍으로 묶어서 GPT에게 보여줌
-
-    private List<String> extractConversationPairs(String targetName, List<ConversationTurn> turns) {
-        List<String> pairs = new ArrayList<>();
-        if (turns == null || turns.isEmpty()) return pairs;
-
-        for (int i = 1; i < turns.size(); i++) {
-            ConversationTurn current = turns.get(i);
-            if (!current.getSender().equals(targetName)) continue;
-
-            // 직전 발화자가 다른 사람이면 → 쌍 생성
-            ConversationTurn prev = turns.get(i - 1);
-            if (prev.getSender().equals(targetName)) continue;
-
-            String pair = prev.getSender() + ": " + prev.getMessage()
-                + "\n" + targetName + ": " + current.getMessage();
-            pairs.add(pair);
-        }
-
-        // 최근 50개 위주로, 전체에서 균등 샘플링도 추가
-        int total = pairs.size();
-        if (total <= 50) return pairs;
-
-        List<String> sampled = new ArrayList<>();
-        // 최근 30개
-        sampled.addAll(pairs.subList(total - 30, total));
-        // 나머지 구간에서 20개 균등 샘플
-        int step = (total - 30) / 20;
-        for (int i = 0; i < total - 30 && sampled.size() < 50; i += Math.max(1, step)) {
-            sampled.add(0, pairs.get(i));
-        }
-        return sampled;
-    }
-
     // ── 최근 가중 샘플 ──────────────────────────────────────
-    // 최신 메시지에 더 많은 비중을 두고 샘플링
 
     private List<String> extractRecentWeightedSamples(List<String> messages) {
         List<String> filtered = messages.stream()
@@ -182,10 +324,7 @@ public class PersonaAnalysisService {
         int recentCount = Math.min(20, size);
         int olderCount  = Math.min(10, size - recentCount);
 
-        // 최근 20개
         samples.addAll(filtered.subList(Math.max(0, size - recentCount), size));
-
-        // 나머지 구간에서 10개 균등
         if (olderCount > 0) {
             int step = Math.max(1, (size - recentCount) / olderCount);
             for (int i = 0; i < size - recentCount && samples.size() < 30; i += step) {
@@ -196,15 +335,12 @@ public class PersonaAnalysisService {
     }
 
     // ── 기억 후보 수집 ─────────────────────────────────────
-    // 발화자를 명확히 표시해서 GPT가 혼동하지 않도록 함
 
     private List<String> collectCandidates(String targetName,
                                              Map<String, List<String>> allMessages,
                                              List<ConversationTurn> orderedTurns) {
         List<String> candidates = new ArrayList<>();
 
-        // 1. 이벤트 키워드가 등장한 대화 쌍을 "발화자: 내용" 형태로 수집
-        //    → 누가 한 말인지 명확히 해서 GPT 혼동 방지
         String[] eventKeywords = {
             "여행", "공연", "콘서트", "발표", "시험", "과제", "회의",
             "밥", "카페", "술", "맛집", "먹었", "갔다", "다녀왔",
@@ -212,7 +348,6 @@ public class PersonaAnalysisService {
             "취업", "졸업", "군대", "퇴사", "이직", "아프"
         };
 
-        // 이벤트 키워드 포함 대화 — 최근 200턴에서 10개, 나머지 800턴에서 5개 (최신 우선, ±2턴 컨텍스트)
         if (orderedTurns != null) {
             int total = orderedTurns.size();
             List<ConversationTurn> window800 = orderedTurns.subList(Math.max(0, total - 1000), Math.max(0, total - 200));
@@ -222,7 +357,6 @@ public class PersonaAnalysisService {
             collectEvents(targetName, window800, eventKeywords, 10, candidates);
         }
 
-        // 2. 타겟이 직접 한 말 — 최근 1000개 중 마지막 20개 (발화자 명시)
         List<String> myMessages = allMessages.getOrDefault(targetName, List.of());
         int size = myMessages.size();
         List<String> recentMy = myMessages.subList(Math.max(0, size - 1000), size).stream()
@@ -237,7 +371,6 @@ public class PersonaAnalysisService {
         return candidates.stream().distinct().limit(50).collect(Collectors.toList());
     }
 
-    // 역순(최신 우선)으로 이벤트 키워드 포함 대화를 수집, ±2턴 컨텍스트 포함
     private void collectEvents(String targetName, List<ConversationTurn> turns,
                                 String[] keywords, int maxCount, List<String> out) {
         int collected = 0;
@@ -248,14 +381,11 @@ public class PersonaAnalysisService {
             if (!hasKeyword || msg.length() > 80) continue;
 
             StringBuilder ctx = new StringBuilder();
-            // 앞 2턴
             for (int j = Math.max(0, i - 2); j < i; j++) {
                 ConversationTurn t = turns.get(j);
                 ctx.append(t.getSender()).append(": ").append(truncate(t.getMessage(), 50)).append("\n");
             }
-            // 현재
             ctx.append(turn.getSender()).append(": ").append(truncate(msg, 50));
-            // 뒤 2턴
             for (int j = i + 1; j <= Math.min(turns.size() - 1, i + 2); j++) {
                 ConversationTurn t = turns.get(j);
                 ctx.append("\n").append(t.getSender()).append(": ").append(truncate(t.getMessage(), 50));
@@ -272,14 +402,11 @@ public class PersonaAnalysisService {
     // ── MBTI 추정 ────────────────────────────────────────────
 
     private String estimateMbti(List<String> messages, List<ConversationTurn> turns, String name) {
-        // E/I: 대화 첫 발화자 빈도 (외향 = 먼저 말 자주 검)
         long initiatedCount = 0;
         if (turns != null) {
             for (int i = 0; i < turns.size(); i++) {
                 if (turns.get(i).getSender().equals(name)) {
-                    if (i == 0 || !turns.get(i - 1).getSender().equals(name)) {
-                        initiatedCount++;
-                    }
+                    if (i == 0 || !turns.get(i - 1).getSender().equals(name)) initiatedCount++;
                 }
             }
         }
@@ -288,7 +415,6 @@ public class PersonaAnalysisService {
         double initiateRatio = totalMyTurns > 0 ? (double) initiatedCount / totalMyTurns : 0.5;
         char ei = initiateRatio > 0.45 ? 'E' : 'I';
 
-        // N/S: 추상적 vs 구체적
         long nCount = messages.stream().filter(m ->
             m.contains("느낌") || m.contains("생각") || m.contains("것 같") ||
             m.contains("왠지") || m.contains("뭔가") || m.contains("아마")).count();
@@ -297,7 +423,6 @@ public class PersonaAnalysisService {
             m.contains("몇 시") || m.contains("어디") || m.contains("얼마")).count();
         char ns = nCount >= sCount ? 'N' : 'S';
 
-        // T/F: 논리 vs 감성
         long tCount = messages.stream().filter(m ->
             m.contains("왜냐") || m.contains("그래서") || m.contains("따라서") ||
             m.contains("분석") || m.contains("이유") || m.contains("논리")).count();
@@ -306,7 +431,6 @@ public class PersonaAnalysisService {
             m.contains("속상") || m.contains("행복") || m.contains("슬프")).count();
         char tf = fCount > tCount ? 'F' : 'T';
 
-        // J/P: 계획 vs 즉흥
         long jCount = messages.stream().filter(m ->
             m.contains("계획") || m.contains("일정") || m.contains("정해") ||
             m.contains("준비") || m.contains("미리") || m.contains("스케줄")).count();
@@ -352,86 +476,95 @@ public class PersonaAnalysisService {
     private String buildGeminiSystemPrompt(
         String name, String speechStyle, String avgLength,
         List<String> phrases, String endings,
-        String reactionStyle, String emotionStyle,
-        List<String> conversationPairs, List<String> recentSamples,
-        List<String> memories, String mbti
+        String endingStyle, String typingHabits, String burstPattern,
+        List<String> topics, String reactionStyle, String emotionStyle,
+        Map<String, List<String>> situationalPairs,
+        List<String> recentSamples, List<String> memories, String mbti
     ) {
         String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
+        String topicStr = topics.isEmpty() ? "없음" : String.join(", ", topics);
 
-        String pairsText = conversationPairs.isEmpty()
-            ? "(대화 쌍 없음)"
-            : conversationPairs.stream()
-                .limit(20)
-                .collect(Collectors.joining("\n\n"));
+        // 상황별 대화 쌍 — 각 카테고리에서 최대 5개씩
+        StringBuilder pairsBuilder = new StringBuilder();
+        for (Map.Entry<String, List<String>> entry : situationalPairs.entrySet()) {
+            List<String> list = entry.getValue();
+            if (list.isEmpty()) continue;
+            pairsBuilder.append("▶ ").append(entry.getKey()).append("\n");
+            list.stream().limit(5).forEach(p -> pairsBuilder.append(p).append("\n\n"));
+        }
+        String pairsText = pairsBuilder.length() == 0 ? "(대화 쌍 없음)" : pairsBuilder.toString().trim();
 
-        String samplesText = recentSamples.isEmpty()
-            ? "(없음)"
+        String samplesText = recentSamples.isEmpty() ? "(없음)"
             : recentSamples.stream().limit(15).map(m -> "\"" + m + "\"")
                 .collect(Collectors.joining("\n"));
 
-        String memoryText = memories.isEmpty()
-            ? "(없음)"
-            : memories.stream().map(m -> "• " + m)
-                .collect(Collectors.joining("\n"));
-
-        // few-shot 예시 생성 (대화 쌍 앞 3개)
-        String fewShot = conversationPairs.stream().limit(3)
-            .collect(Collectors.joining("\n---\n"));
+        String memoryText = memories.isEmpty() ? "(없음)"
+            : memories.stream().map(m -> "• " + m).collect(Collectors.joining("\n"));
 
         String mbtiStyle = mbtiToConversationStyle(mbti);
 
         return String.format("""
             너는 지금부터 '%s'야. AI가 아니라 실제 그 사람이야.
 
-            [%s의 말투]
+            ─────────────────────────────
+            [%s의 말투 & 타이핑 습관]
             스타일: %s
             자주 쓰는 말: %s
+            종결어미 분포: %s
+            타이핑 습관: %s
+            메시지 패턴: %s
             특징: %s
-
+            ─────────────────────────────
             [%s의 성격 — MBTI %s 추정]
             %s
 
-            [실제 대화 예시 - 이렇게 말하는 사람이야]
-            %s
+            자주 얘기하는 주제: %s
+            ─────────────────────────────
+            [실제 대화 예시 — 상황별]
+            (이게 핵심. 이 사람이 실제로 어떻게 말하는지야)
 
+            %s
+            ─────────────────────────────
             [최근에 한 말들]
             %s
-
+            ─────────────────────────────
             [알고 있는 것들]
             %s
-
+            ─────────────────────────────
             [반드시 지킬 규칙]
-            1. 위 대화 예시처럼 말해. 말투, 어조 그대로.
-            2. 반드시 2어절 이상으로 답해. "어", "응", "ㅇ" 하나만 쓰지 마.
-               단답이라도 "어 왜", "ㅇㅇ 근데", "모르는데 왜" 같이 맥락 붙여.
-            3. 3번에 1번은 역질문을 던져. "근데 너는?", "왜 갑자기?", "그거 됐어?" 등.
-               이야기를 이어가게 만들어. 대화를 끊지 마.
-            4. 자기 얘기도 자연스럽게 끼워넣어. "나도 그런 적 있는데", "갑자기 생각났는데" 등.
-            5. AI처럼 설명하거나 도움 주려 하지 마.
-            6. 이상한 질문엔 "갑자기?", "그게 뭔 소리야", "ㅋㅋ 뭐래" 식으로 반응.
-            7. 과거 얘기 나오면 기억 참고해서 자연스럽게 반응.
-            8. 존댓말/반말은 위 스타일대로만.
+            1. 위 예시처럼 말해. 말투, 어조, 타이핑 습관 그대로.
+            2. 2어절 이상으로 답해. "어", "응" 하나로 끝내지 마.
+               단답이라도 "어 왜ㅋㅋ", "ㅇㅇ 근데", "모르는데 왜" 처럼 맥락 붙여.
+            3. 3번에 1번꼴로 역질문을 던져. 대화를 이어가.
+               예: "근데 너는?", "왜 갑자기?", "그거 어떻게 됐어?"
+            4. 자기 얘기도 자연스럽게 끼워넣어.
+               예: "나도 그런 적 있는데", "갑자기 생각났는데"
+            5. 주제가 나오면 기억 참고해서 반응해.
+               예: 공부 얘기 → 과거 시험 얘기 자연스럽게 언급
+            6. AI처럼 설명·도움 주려 하지 마.
+            7. 이상한 질문엔 "갑자기?", "뭔 소리야", "ㅋㅋ 뭐래" 식으로.
+            8. 존댓말/반말 위 스타일 그대로.
             9. 절대 AI라고 밝히지 마.
             10. 매번 다르게 반응해. 같은 표현 반복 금지.
 
             [좋은 예 vs 나쁜 예]
-            나쁜 예: "어" / "응" / "네, 맞습니다" / "저는 AI입니다" / 맨날 단답만
-            좋은 예: "어 왜ㅋㅋ 갑자기" / "ㅇㅇ 근데 그거 어떻게 됐어?" / "모르겠는데 왜 물어봄" / "나도 그거 했는데 진짜 별로더라"
+            나쁜: "어" / "응" / "네 맞아요" / 항상 단답
+            좋은: "어 왜ㅋㅋ 갑자기" / "ㅇㅇ 근데 그거 어떻게 됐어?" / "나도 그거 들었는데 진짜임?"
             """,
-            name, name, speechStyle, phraseStr, endings,
-            name, mbti, mbtiStyle,
-            pairsText.isEmpty() ? fewShot : pairsText,
-            samplesText, memoryText
+            name, name, speechStyle, phraseStr, endingStyle, typingHabits, burstPattern, endings,
+            name, mbti, mbtiStyle, topicStr,
+            pairsText, samplesText, memoryText
         );
     }
 
-    // ── GPT 전용 시스템 프롬프트 빌더 ──────────────────────
+    // ── GPT 전용 시스템 프롬프트 ──────────────────────────
 
     private String buildSystemPrompt(
         String name, String speechStyle, String avgLength,
         List<String> phrases, String endings,
         String reactionStyle, String emotionStyle,
-        List<String> conversationPairs, List<String> recentSamples,
+        List<String> conversationPairs,
+        List<String> recentSamples,
         List<String> memories, String mbti
     ) {
         String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
@@ -439,26 +572,19 @@ public class PersonaAnalysisService {
         String pairsText = conversationPairs.isEmpty()
             ? "  (대화 쌍 없음)"
             : conversationPairs.stream()
-                .map(p -> p.lines()
-                    .map(l -> "  " + l)
-                    .collect(Collectors.joining("\n")))
+                .map(p -> p.lines().map(l -> "  " + l).collect(Collectors.joining("\n")))
                 .collect(Collectors.joining("\n\n"));
 
-        String samplesText = recentSamples.isEmpty()
-            ? "  (없음)"
-            : recentSamples.stream().map(m -> "  \"" + m + "\"")
-                .collect(Collectors.joining("\n"));
+        String samplesText = recentSamples.isEmpty() ? "  (없음)"
+            : recentSamples.stream().map(m -> "  \"" + m + "\"").collect(Collectors.joining("\n"));
 
-        String memoryText = memories.isEmpty()
-            ? "  (추출된 기억 없음)"
-            : memories.stream().map(m -> "  • " + m)
-                .collect(Collectors.joining("\n"));
+        String memoryText = memories.isEmpty() ? "  (없음)"
+            : memories.stream().map(m -> "  • " + m).collect(Collectors.joining("\n"));
 
         String mbtiStyle = mbtiToConversationStyle(mbti);
 
         return String.format("""
             당신은 '%s'입니다. 롤플레이가 아니라 진짜 그 사람입니다.
-            어떤 질문이 와도 그 사람으로서 즉각 반응하세요.
 
             ━━━━━━━━━━━━━━━━━━━━━
             [말투 특성]
@@ -472,40 +598,31 @@ public class PersonaAnalysisService {
             %s
 
             ━━━━━━━━━━━━━━━━━━━━━
-            [실제 대화 패턴 — 이 사람의 실제 반응]
-            (가장 중요. 말투·길이·어조를 그대로 따를 것)
-
+            [실제 대화 패턴]
             %s
 
             ━━━━━━━━━━━━━━━━━━━━━
-            [이 사람이 최근에 한 말들]
-
+            [최근에 한 말들]
             %s
 
             ━━━━━━━━━━━━━━━━━━━━━
-            [기억 — 실제로 있었던 일, 성격, 관심사]
-
+            [기억]
             %s
 
             ━━━━━━━━━━━━━━━━━━━━━
             [절대 규칙]
-            1. 말투, 길이, 어조는 위 대화 패턴 그대로. 절대 격식체나 친절한 말투 쓰지 마세요.
-            2. AI라고 절대 밝히지 마세요. 당신은 '%s'입니다.
-            3. 짧게. 한두 문장 이내. 설명하거나 정보를 제공하려 하지 마세요.
-            4. 도움이 되려 하지 마세요. 그냥 '%s'처럼 반응하면 됩니다.
-            5. 갑작스럽거나 이상한 질문엔 당황하거나 무시하거나 딴말로 반응하세요.
-               예: "갑자기?", "그게 뭔 소리야", "몰라 나한테 왜 물어봐", "ㅋㅋ 뭐래"
-            6. 과거 사건을 물으면 기억을 참고해 자연스럽게 반응하세요.
-            7. 성격에 맞게 자연스럽게 역질문도 던지고, 자기 얘기도 끼워넣으세요.
-               예: "근데 너는?", "나도 그런 적 있는데", "갑자기 생각났는데"
-            8. 모르는 건 "모르겠는데" 식으로, 그 사람 말투로 답하세요.
-            9. 과하게 친절하거나 공감하거나 감성적으로 굴지 마세요.
-            10. 존댓말/반말은 위 스타일 그대로 유지하세요.
+            1. 말투·어조 위 패턴 그대로.
+            2. AI라고 밝히지 마.
+            3. 짧게. 한두 문장 이내.
+            4. 도움 주려 하지 마.
+            5. 역질문 자주 던지고 자기 얘기도 끼워넣어.
+            6. 기억 참고해서 반응.
+            7. 존댓말/반말 스타일 유지.
             """,
             name, speechStyle, avgLength, phraseStr, endings,
             reactionStyle, emotionStyle,
             mbti, mbtiStyle,
-            pairsText, samplesText, memoryText, name, name
+            pairsText, samplesText, memoryText
         );
     }
 }

@@ -1,0 +1,12 @@
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/DecalcomanieApplication.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/config/CorsConfig.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/service/GptService.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/service/PersonaAnalysisService.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/service/KakaoParserService.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/model/SessionData.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/model/Persona.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/model/ChatMessage.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/model/ConversationTurn.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/model/ParsedChat.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/controller/DecalcomanieController.java
+/Users/jaeung/IdeaProjects/decalcomanie-backend/src/main/java/com/torchers/decalcomanie/service/SessionStoreService.java
