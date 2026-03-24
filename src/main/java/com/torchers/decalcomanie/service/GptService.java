@@ -178,7 +178,7 @@ public class GptService {
             + "\n\n" + buildTimeContext();
         List<Map<String, Object>> contents = List.of(
             Map.of("role", "user", "parts", List.of(Map.of("text",
-                "대화 시작. 상대방에게 먼저 짧게 한두 마디로 자연스럽게 말 걸어. 그 사람 말투 그대로.")))
+                "대화 시작. 일상적인 인사 또는 근황 한두 마디만 해. 배경 지식이나 과거 얘기 꺼내지 마. 말투 그대로.")))
         );
         try {
             return callGemini(systemPrompt, contents, 0.85, 1200);
