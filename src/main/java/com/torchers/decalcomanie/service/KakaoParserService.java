@@ -13,8 +13,13 @@ import java.util.regex.Pattern;
 @Service
 public class KakaoParserService {
 
-    private static final Pattern TXT_PATTERN =
+    // 구버전: 오전 9:57, 김재웅 : 메시지
+    private static final Pattern TXT_PATTERN_OLD =
         Pattern.compile("^(오전|오후) \\d{1,2}:\\d{2}, (.+?) : (.+)$");
+
+    // 신버전: [김재웅] [오전 9:57] 메시지
+    private static final Pattern TXT_PATTERN_NEW =
+        Pattern.compile("^\\[(.+?)\\] \\[(오전|오후) \\d{1,2}:\\d{2}\\] (.+)$");
 
     private static final Pattern DATE_PATTERN =
         Pattern.compile("^\"?\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\"?$");
@@ -33,13 +38,17 @@ public class KakaoParserService {
     }
 
     private String detectCharset(byte[] bytes) {
+        // UTF-8 BOM 체크
         if (bytes.length >= 3 && (bytes[0] & 0xFF) == 0xEF
             && (bytes[1] & 0xFF) == 0xBB && (bytes[2] & 0xFF) == 0xBF) {
             return "UTF-8";
         }
+        // UTF-8로 디코딩 후 한글 존재 여부 확인 (문자 단위 순회 — multiline 안전)
         try {
             String test = new String(bytes, "UTF-8");
-            if (test.matches(".*[가-힣].*")) return "UTF-8";
+            for (char c : test.toCharArray()) {
+                if (c >= '가' && c <= '힣') return "UTF-8";
+            }
         } catch (Exception ignored) {}
         return "EUC-KR";
     }
@@ -49,14 +58,26 @@ public class KakaoParserService {
         List<ConversationTurn> orderedTurns = new ArrayList<>();
 
         for (String line : content.split("\n")) {
-            Matcher matcher = TXT_PATTERN.matcher(line.trim());
-            if (matcher.matches()) {
-                String name = matcher.group(2).trim();
-                String message = maskSensitiveInfo(matcher.group(3).trim());
-                if (!isSkippable(message)) {
-                    messagesByParticipant.computeIfAbsent(name, k -> new ArrayList<>()).add(message);
-                    orderedTurns.add(new ConversationTurn(name, message));
+            String trimmed = line.trim();
+            String name = null, message = null;
+
+            // 신버전: [이름] [오전/오후 HH:MM] 메시지
+            Matcher newMatcher = TXT_PATTERN_NEW.matcher(trimmed);
+            if (newMatcher.matches()) {
+                name = newMatcher.group(1).trim();
+                message = maskSensitiveInfo(newMatcher.group(3).trim());
+            } else {
+                // 구버전: 오전/오후 HH:MM, 이름 : 메시지
+                Matcher oldMatcher = TXT_PATTERN_OLD.matcher(trimmed);
+                if (oldMatcher.matches()) {
+                    name = oldMatcher.group(2).trim();
+                    message = maskSensitiveInfo(oldMatcher.group(3).trim());
                 }
+            }
+
+            if (name != null && message != null && !isSkippable(message)) {
+                messagesByParticipant.computeIfAbsent(name, k -> new ArrayList<>()).add(message);
+                orderedTurns.add(new ConversationTurn(name, message));
             }
         }
 
