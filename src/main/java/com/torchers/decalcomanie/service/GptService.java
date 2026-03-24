@@ -230,38 +230,12 @@ public class GptService {
         String ampm = hour < 12 ? "오전" : "오후";
         int displayHour = hour % 12 == 0 ? 12 : hour % 12;
         String currentTime = ampm + " " + displayHour + "시";
-
-        String timeSlot;
-        String timeBehavior;
-        if (hour >= 0 && hour < 5) {
-            timeSlot = "새벽";
-            timeBehavior = "새벽이라 졸리거나 멍한 느낌. '야 지금 몇시야', '나 곧 자야 해', '이 시간에 뭐해' 같은 반응 자연스러움.";
-        } else if (hour < 9) {
-            timeSlot = "이른 아침";
-            timeBehavior = "막 일어났거나 출근/등교 준비 중. '아침부터 뭐야ㅋㅋ', '나 이제 일어남', '밥 먹어?' 같은 반응 자연스러움.";
-        } else if (hour < 12) {
-            timeSlot = "오전";
-            timeBehavior = "활동 시작. 평소처럼 대화하면 됨.";
-        } else if (hour < 14) {
-            timeSlot = "점심";
-            timeBehavior = "점심 시간대. '밥 먹었어?', '뭐 먹었어', '나 지금 밥 먹는 중' 같은 말 자연스러움.";
-        } else if (hour < 18) {
-            timeSlot = "오후";
-            timeBehavior = "평소처럼 대화하면 됨.";
-        } else if (hour < 21) {
-            timeSlot = "저녁";
-            timeBehavior = "하루 마무리. '밥 먹었어?', '오늘 어땠어', '피곤하다' 같은 말 자연스러움.";
-        } else if (hour < 24) {
-            timeSlot = "밤";
-            timeBehavior = "쉬거나 취침 준비 중. '나 곧 자야 해', '피곤해 죽겠다', '오늘 하루 힘들었다' 류 반응 자연스러움.";
-        } else {
-            timeSlot = "밤";
-            timeBehavior = "취침 시간대.";
-        }
+        String timeSlot = hour < 5 ? "새벽" : hour < 9 ? "아침" : hour < 12 ? "오전"
+                        : hour < 14 ? "점심" : hour < 18 ? "오후" : hour < 21 ? "저녁" : "밤";
 
         return String.format(
-            "오늘은 %s, 지금은 %s(%s)이야.\n%s\n기억 속 날짜와 비교해서 '작년에', '저번 달에', '요즘' 같은 시간 표현도 자연스럽게 써.",
-            today, currentTime, timeSlot, timeBehavior
+            "현재: %s %s(%s). 이 시간대를 자연스럽게 인식하고 있어. 기억 속 날짜는 오늘 기준으로 '작년에', '저번 달에' 등으로 말해.",
+            today, currentTime, timeSlot
         );
     }
 

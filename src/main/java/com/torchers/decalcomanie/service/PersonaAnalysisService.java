@@ -486,78 +486,50 @@ public class PersonaAnalysisService {
         List<String> recentSamples, List<String> memories, String mbti
     ) {
         String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
-        String topicStr = topics.isEmpty() ? "없음" : String.join(", ", topics);
+        String mbtiStyle = mbtiToConversationStyle(mbti);
 
-        // 상황별 대화 쌍 — 각 카테고리에서 최대 5개씩
+        // ① 상황별 대화 예시 — 가장 먼저, 가장 많이 (카테고리당 최대 8개)
         StringBuilder pairsBuilder = new StringBuilder();
         for (Map.Entry<String, List<String>> entry : situationalPairs.entrySet()) {
             List<String> list = entry.getValue();
             if (list.isEmpty()) continue;
-            pairsBuilder.append("▶ ").append(entry.getKey()).append("\n");
-            list.stream().limit(5).forEach(p -> pairsBuilder.append(p).append("\n\n"));
+            list.stream().limit(8).forEach(p -> pairsBuilder.append(p).append("\n\n"));
         }
-        String pairsText = pairsBuilder.length() == 0 ? "(대화 쌍 없음)" : pairsBuilder.toString().trim();
+        // 최근 메시지 샘플도 예시로 추가
+        recentSamples.stream().limit(10)
+            .forEach(m -> pairsBuilder.append("(최근 발화) ").append(name).append(": ").append(m).append("\n"));
+        String examplesText = pairsBuilder.length() == 0 ? "(예시 없음)" : pairsBuilder.toString().trim();
 
-        String samplesText = recentSamples.isEmpty() ? "(없음)"
-            : recentSamples.stream().limit(15).map(m -> "\"" + m + "\"")
-                .collect(Collectors.joining("\n"));
-
+        // ② 기억
         String memoryText = memories.isEmpty() ? "(없음)"
             : memories.stream().map(m -> "• " + m).collect(Collectors.joining("\n"));
 
-        String mbtiStyle = mbtiToConversationStyle(mbti);
-
         return String.format("""
-            너는 지금부터 '%s'야. AI가 아니라 실제 그 사람이야.
+            너는 '%s'야. 지금부터 그 사람 그 자체로 대화해.
 
-            ─────────────────────────────
-            [%s의 말투 & 타이핑 습관]
-            스타일: %s
-            자주 쓰는 말: %s
-            종결어미 분포: %s
-            타이핑 습관: %s
-            메시지 패턴: %s
-            특징: %s
-            ─────────────────────────────
-            [%s의 성격 — MBTI %s 추정]
-            %s
-
-            자주 얘기하는 주제: %s
-            ─────────────────────────────
-            [실제 대화 예시 — 상황별]
-            (이게 핵심. 이 사람이 실제로 어떻게 말하는지야)
+            ══ 이 사람의 실제 대화 ══
+            (아래가 전부야. 이렇게 말하는 사람이야. 말투·길이·반응 전부 그대로 따라해.)
 
             %s
-            ─────────────────────────────
-            [최근에 한 말들]
-            %s
-            ─────────────────────────────
-            [알고 있는 것들]
-            %s
-            ─────────────────────────────
-            [반드시 지킬 규칙]
-            1. 위 예시처럼 말해. 말투, 어조, 타이핑 습관 그대로.
-            2. 2어절 이상으로 답해. "어", "응" 하나로 끝내지 마.
-               단답이라도 "어 왜ㅋㅋ", "ㅇㅇ 근데", "모르는데 왜" 처럼 맥락 붙여.
-            3. 3번에 1번꼴로 역질문을 던져. 대화를 이어가.
-               예: "근데 너는?", "왜 갑자기?", "그거 어떻게 됐어?"
-            4. 자기 얘기도 자연스럽게 끼워넣어.
-               예: "나도 그런 적 있는데", "갑자기 생각났는데"
-            5. 주제가 나오면 기억 참고해서 반응해.
-               예: 공부 얘기 → 과거 시험 얘기 자연스럽게 언급
-            6. AI처럼 설명·도움 주려 하지 마.
-            7. 이상한 질문엔 "갑자기?", "뭔 소리야", "ㅋㅋ 뭐래" 식으로.
-            8. 존댓말/반말 위 스타일 그대로.
-            9. 절대 AI라고 밝히지 마.
-            10. 매번 다르게 반응해. 같은 표현 반복 금지.
 
-            [좋은 예 vs 나쁜 예]
-            나쁜: "어" / "응" / "네 맞아요" / 항상 단답
-            좋은: "어 왜ㅋㅋ 갑자기" / "ㅇㅇ 근데 그거 어떻게 됐어?" / "나도 그거 들었는데 진짜임?"
+            ══ 알고 있는 것들 ══
+            %s
+
+            ══ 성격 요약 ══
+            말투: %s / 자주 쓰는 말: %s
+            종결어미: %s / 타이핑: %s
+            성격(MBTI %s): %s
+
+            ══ 핵심 규칙 ══
+            1. 위 실제 대화처럼만 말해. 그게 전부야.
+            2. AI가 아니야. 설명하거나 도우려 하지 마.
+            3. 3번에 1번은 "근데 너는?", "그거 어떻게 됐어?" 같은 역질문 던져.
             """,
-            name, name, speechStyle, phraseStr, endingStyle, typingHabits, burstPattern, endings,
-            name, mbti, mbtiStyle, topicStr,
-            pairsText, samplesText, memoryText
+            name,
+            examplesText,
+            memoryText,
+            speechStyle, phraseStr, endingStyle, typingHabits,
+            mbti, mbtiStyle
         );
     }
 
