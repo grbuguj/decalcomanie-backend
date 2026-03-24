@@ -381,6 +381,10 @@ public class PersonaAnalysisService {
             if (!hasKeyword || msg.length() > 80) continue;
 
             StringBuilder ctx = new StringBuilder();
+            // 날짜 헤더 포함 (있으면)
+            if (turn.getDate() != null) {
+                ctx.append("[").append(turn.getDate()).append("]\n");
+            }
             for (int j = Math.max(0, i - 2); j < i; j++) {
                 ConversationTurn t = turns.get(j);
                 ctx.append(t.getSender()).append(": ").append(truncate(t.getMessage(), 50)).append("\n");

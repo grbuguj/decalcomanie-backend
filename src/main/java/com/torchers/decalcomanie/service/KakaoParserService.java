@@ -21,11 +21,18 @@ public class KakaoParserService {
     private static final Pattern TXT_PATTERN_NEW =
         Pattern.compile("^\\[(.+?)\\] \\[(오전|오후) \\d{1,2}:\\d{2}\\] (.+)$");
 
-    private static final Pattern DATE_PATTERN =
-        Pattern.compile("^\"?\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\"?$");
+    // TXT 날짜 구분선: "2024년 3월 1일 금요일" or "2024년 03월 01일 금요일"
+    private static final Pattern TXT_DATE_LINE =
+        Pattern.compile("^(\\d{4}년 \\d{1,2}월 \\d{1,2}일)[가-힣 ]*$");
+
+    // CSV datetime: "2024-03-01 09:57:00"
+    private static final Pattern CSV_DATE_PATTERN =
+        Pattern.compile("^\"?(\\d{4})-(\\d{2})-(\\d{2}) \\d{2}:\\d{2}:\\d{2}\"?$");
 
     private static final Pattern PHONE_PATTERN =
         Pattern.compile("\\d{3}-\\d{3,4}-\\d{4}");
+
+    // (구 DATE_PATTERN 대체됨 — CSV_DATE_PATTERN 사용)
 
     public ParsedChat parse(InputStream inputStream, String sessionId, String filename) throws Exception {
         byte[] bytes = inputStream.readAllBytes();
@@ -56,9 +63,18 @@ public class KakaoParserService {
     private ParsedChat parseTxt(String content, String sessionId) {
         Map<String, List<String>> messagesByParticipant = new LinkedHashMap<>();
         List<ConversationTurn> orderedTurns = new ArrayList<>();
+        String currentDate = null;
 
         for (String line : content.split("\n")) {
             String trimmed = line.trim();
+
+            // 날짜 구분선 감지: "2024년 3월 1일 금요일"
+            Matcher dateMatcher = TXT_DATE_LINE.matcher(trimmed);
+            if (dateMatcher.matches()) {
+                currentDate = dateMatcher.group(1); // "2024년 3월 1일"
+                continue;
+            }
+
             String name = null, message = null;
 
             // 신버전: [이름] [오전/오후 HH:MM] 메시지
@@ -77,7 +93,7 @@ public class KakaoParserService {
 
             if (name != null && message != null && !isSkippable(message)) {
                 messagesByParticipant.computeIfAbsent(name, k -> new ArrayList<>()).add(message);
-                orderedTurns.add(new ConversationTurn(name, message));
+                orderedTurns.add(new ConversationTurn(name, message, currentDate));
             }
         }
 
@@ -97,7 +113,14 @@ public class KakaoParserService {
             if (firstComma == -1) continue;
 
             String dateField = line.substring(0, firstComma).trim();
-            if (!DATE_PATTERN.matcher(dateField).matches()) continue;
+            Matcher csvDateMatcher = CSV_DATE_PATTERN.matcher(dateField);
+            if (!csvDateMatcher.matches()) continue;
+
+            // "2024-03-01" → "2024년 3월 1일"
+            int year  = Integer.parseInt(csvDateMatcher.group(1));
+            int month = Integer.parseInt(csvDateMatcher.group(2));
+            int day   = Integer.parseInt(csvDateMatcher.group(3));
+            String date = year + "년 " + month + "월 " + day + "일";
 
             int secondComma = line.indexOf(',', firstComma + 1);
             if (secondComma == -1) continue;
@@ -109,7 +132,7 @@ public class KakaoParserService {
 
             if (!name.isEmpty() && !isSkippable(message)) {
                 messagesByParticipant.computeIfAbsent(name, k -> new ArrayList<>()).add(message);
-                orderedTurns.add(new ConversationTurn(name, message));
+                orderedTurns.add(new ConversationTurn(name, message, date));
             }
         }
 

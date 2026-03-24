@@ -8,6 +8,8 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -135,8 +137,10 @@ public class GptService {
     }
 
     private String buildGeminiMemoryPrompt(String name, String candidateText) {
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
         return String.format("""
             아래 카카오톡 대화에서 '%s'에 대한 사실을 뽑아줘.
+            오늘은 %s야.
 
             대화:
             %s
@@ -145,27 +149,31 @@ public class GptService {
             1. '%s'가 직접 한 말에서만 사실 추출 (다른 사람 말은 맥락 참고용)
             2. 한 줄에 하나씩만 써
             3. 각 줄은 반드시 "~했음" 또는 "~인 것 같음"으로 끝내
-            4. 첫 줄부터 바로 사실 나열 (인트로, 제목, 번호 없이)
-            5. 최대 15줄
-            6. 구체적으로: 장소, 사람, 사건 포함
+            4. 대화 앞에 [날짜]가 있으면 그 날짜를 기준으로 "작년에", "몇 달 전에", "최근에" 같은 시간 표현 포함
+            5. 첫 줄부터 바로 사실 나열 (인트로, 제목, 번호 없이)
+            6. 최대 15줄
+            7. 구체적으로: 날짜/시기, 장소, 사람, 사건 포함
 
             출력 예시:
-            시험 기간이라 공부 중이었음
-            친구랑 카페에서 만났음
-            취업 준비 중인 것 같음
-            """, name, candidateText, name);
+            작년 3월에 시험 기간이라 공부 중이었음
+            2개월 전에 친구랑 카페에서 만났음
+            최근에 취업 준비 중인 것 같음
+            """, name, today, candidateText, name);
     }
 
     public String greet(Persona persona, String nickname) {
-        String nicknameHint = (nickname != null && !nickname.isBlank())
-            ? " 상대방 이름은 '" + nickname + "'이야. 자연스럽게 불러도 돼."
-            : "";
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
+        String systemPrompt = persona.getSystemPrompt()
+            + "\n\n오늘은 " + today + "이야. 기억 속 날짜와 비교해서 '작년에', '저번 달에', '요즘' 같은 시간 표현을 자연스럽게 써.";
+        if (nickname != null && !nickname.isBlank()) {
+            systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 자연스럽게 불러도 돼.";
+        }
         List<Map<String, Object>> contents = List.of(
             Map.of("role", "user", "parts", List.of(Map.of("text",
-                "대화 시작. 상대방에게 먼저 짧게 한두 마디로 자연스럽게 말 걸어. 그 사람 말투 그대로." + nicknameHint)))
+                "대화 시작. 상대방에게 먼저 짧게 한두 마디로 자연스럽게 말 걸어. 그 사람 말투 그대로.")))
         );
         try {
-            return callGemini(persona.getSystemPrompt(), contents, 0.85, 1200);
+            return callGemini(systemPrompt, contents, 0.85, 1200);
         } catch (Exception e) {
             return "ㅇㅇ";
         }
@@ -190,10 +198,12 @@ public class GptService {
             "parts", List.of(Map.of("text", userMessage))
         ));
 
-        // 닉네임 → 시스템 프롬프트에 추가
-        String systemPrompt = persona.getSystemPrompt();
+        // 오늘 날짜 + 닉네임 → 시스템 프롬프트에 추가
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
+        String systemPrompt = persona.getSystemPrompt()
+            + "\n\n오늘은 " + today + "이야. 기억 속 날짜와 비교해서 '작년에', '저번 달에', '요즘' 같은 시간 표현을 자연스럽게 써.";
         if (nickname != null && !nickname.isBlank()) {
-            systemPrompt += "\n\n상대방 이름은 '" + nickname + "'이야. 대화에서 자연스럽게 불러.";
+            systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 대화에서 자연스럽게 불러.";
         }
 
         // RAG: 현재 메시지 키워드로 관련 과거 대화 검색 → 시스템 프롬프트에 동적 주입
