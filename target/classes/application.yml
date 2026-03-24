@@ -7,8 +7,7 @@ spring:
       max-file-size: 50MB
       max-request-size: 50MB
 
-openai:
+gemini:
   api:
-    key: ${OPENAI_API_KEY}
-    url: https://api.openai.com/v1/chat/completions
-    model: gpt-4o
+    key: ${GEMINI_API_KEY}
+    model: gemini-2.5-flash

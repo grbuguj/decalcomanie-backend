@@ -66,9 +66,17 @@ public class GptService {
         if (content == null) throw new RuntimeException("Gemini content null (finishReason: " + finishReason + ")");
 
         List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
-        if (parts == null || parts.isEmpty()) throw new RuntimeException("Gemini parts 비어있음");
+        if (parts == null || parts.isEmpty()) {
+            throw new RuntimeException("Gemini parts 비어있음 (finishReason: " + finishReason + ", content: " + content + ")");
+        }
 
-        return (String) parts.get(0).get("text");
+        // thinking 모드: text가 있는 part만 찾기
+        for (Map<String, Object> part : parts) {
+            if (part.containsKey("text")) {
+                return (String) part.get("text");
+            }
+        }
+        throw new RuntimeException("Gemini text part 없음 (parts: " + parts + ")");
     }
 
     // 기억 추출 전용 호출
@@ -138,7 +146,7 @@ public class GptService {
         ));
 
         try {
-            return callGemini(persona.getSystemPrompt(), contents, 0.75, 200);
+            return callGemini(persona.getSystemPrompt(), contents, 0.75, 800);
         } catch (Exception e) {
             throw new RuntimeException("Gemini API 호출 실패: " + e.getMessage());
         }
