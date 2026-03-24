@@ -49,6 +49,9 @@ public class PersonaAnalysisService {
 
         String mbti = estimateMbti(myMessages, orderedTurns, name);
 
+        // 주제별 대화쌍 미리 인덱싱 (런타임 RAG 대체)
+        Map<String, List<String>> topicExchanges = buildTopicExchangeMap(name, orderedTurns);
+
         boolean isGemini = modelName != null && modelName.toLowerCase().contains("gemini");
         String systemPrompt = isGemini
             ? buildGeminiSystemPrompt(name, speechStyle, avgLength, phrases, endings,
@@ -71,6 +74,7 @@ public class PersonaAnalysisService {
             .topics(topics)
             .memories(memories)
             .mbti(mbti)
+            .topicExchanges(topicExchanges)
             .systemPrompt(systemPrompt)
             .build();
     }
@@ -218,6 +222,47 @@ public class PersonaAnalysisService {
         if (avg >= 1.7)
             return String.format("가끔 연속으로 보냄 (평균 %.1f개)", avg);
         return "대체로 1개씩 보냄";
+    }
+
+    // ── 신규: 주제별 대화쌍 인덱스 구축 (분석 시점 RAG) ────────
+
+    private static final Map<String, String[]> TOPIC_KEYWORD_MAP = new LinkedHashMap<>() {{
+        put("음식",    new String[]{"밥", "먹", "식당", "카페", "커피", "치킨", "라면", "배고", "맛있", "맛집", "배달"});
+        put("공부/학교", new String[]{"시험", "과제", "수업", "학교", "공부", "성적", "교수", "레포트", "강의"});
+        put("일/직장", new String[]{"회사", "업무", "퇴근", "출근", "야근", "회의", "프로젝트", "상사"});
+        put("운동",    new String[]{"운동", "헬스", "달리기", "다이어트", "헬스장", "탁구", "축구"});
+        put("여행",    new String[]{"여행", "갔다", "다녀왔", "놀러", "여기 왔", "공항", "숙소"});
+        put("게임",    new String[]{"게임", "롤", "배그", "스팀", "플레이", "랭크"});
+        put("건강",    new String[]{"아프", "병원", "약", "감기", "머리아", "열나", "두통"});
+        put("연애",    new String[]{"좋아", "사귀", "헤어", "남친", "여친", "썸", "소개팅"});
+    }};
+
+    private Map<String, List<String>> buildTopicExchangeMap(String name, List<ConversationTurn> turns) {
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        if (turns == null || turns.isEmpty()) return result;
+
+        for (Map.Entry<String, String[]> topicEntry : TOPIC_KEYWORD_MAP.entrySet()) {
+            String topic = topicEntry.getKey();
+            String[] keywords = topicEntry.getValue();
+            List<String> exchanges = new ArrayList<>();
+
+            for (int i = 1; i < turns.size() && exchanges.size() < 5; i++) {
+                ConversationTurn cur  = turns.get(i);
+                ConversationTurn prev = turns.get(i - 1);
+                // 이 페르소나가 포함된 교환만
+                if (!cur.getSender().equals(name) && !prev.getSender().equals(name)) continue;
+                // 주제 키워드 포함 여부
+                boolean match = Arrays.stream(keywords).anyMatch(kw ->
+                    cur.getMessage().contains(kw) || prev.getMessage().contains(kw));
+                if (!match) continue;
+
+                String pair = prev.getSender() + ": " + truncate(prev.getMessage(), 50)
+                    + "\n" + cur.getSender() + ": " + truncate(cur.getMessage(), 50);
+                exchanges.add(pair);
+            }
+            if (!exchanges.isEmpty()) result.put(topic, exchanges);
+        }
+        return result;
     }
 
     // ── 신규: 주제/관심사 감지 ──────────────────────────────
@@ -520,10 +565,16 @@ public class PersonaAnalysisService {
             종결어미: %s / 타이핑: %s
             성격(MBTI %s): %s
 
+            ══ 출력 형식 (필수) ══
+            카카오톡처럼 메시지를 1~4개로 나눠서 |||로 구분해 출력해.
+            - 한 줄로만 출력, 줄바꿈 없이
+            - 예: "ㅋㅋ 진짜?|||나도 그런 적 있었는데|||그거 어떻게 됐어"
+            - 짧아도 돼, 그 사람이 원래 짧게 말하면 짧게
+
             ══ 핵심 규칙 ══
-            1. 위 실제 대화처럼만 말해. 그게 전부야.
+            1. 위 실제 대화처럼만 말해. 말투·반응·길이 전부 그대로.
             2. AI가 아니야. 설명하거나 도우려 하지 마.
-            3. 3번에 1번은 "근데 너는?", "그거 어떻게 됐어?" 같은 역질문 던져.
+            3. 3번에 1번은 역질문 던져. ("근데 너는?", "그거 어떻게 됐어?" 등)
             """,
             name,
             examplesText,

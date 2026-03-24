@@ -4,6 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -12,12 +13,14 @@ public class Persona {
     private String speechStyle;
     private String avgMessageLength;
     private List<String> commonPhrases;
-    private String endingPatterns;      // 짧은 태그용 (기존)
-    private String endingStyle;         // 종결어미 상세 분포 (~ㄴ데 45번, ...)
-    private String typingHabits;        // 오타/축약/ㅋ 패턴
-    private String burstPattern;        // 연속 메시지 습관
-    private List<String> topics;        // 자주 언급하는 주제
+    private String endingPatterns;
+    private String endingStyle;
+    private String typingHabits;
+    private String burstPattern;
+    private List<String> topics;
     private List<String> memories;
     private String mbti;
+    // 주제별 대화쌍 인덱스 (RAG용) — 분석 시점에 미리 구축
+    private Map<String, List<String>> topicExchanges;
     private String systemPrompt;
 }

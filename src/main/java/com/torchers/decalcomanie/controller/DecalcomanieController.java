@@ -115,11 +115,7 @@ public class DecalcomanieController {
 
         String nickname = body.getOrDefault("nickname", "");
 
-        // RAG용 전체 turns 가져오기 (parsedChat은 upload 시 저장됨)
-        var parsedChat = sessionStore.getParsedChat(sessionId);
-        var allTurns = parsedChat != null ? parsedChat.getOrderedTurns() : null;
-
-        String aiResponse = gptService.chat(session.getPersona(), session.getHistory(), userMessage, nickname, allTurns);
+        String aiResponse = gptService.chat(session.getPersona(), session.getHistory(), userMessage, nickname);
 
         session.getHistory().add(new ChatMessage("user", userMessage));
         session.getHistory().add(new ChatMessage("assistant", aiResponse));

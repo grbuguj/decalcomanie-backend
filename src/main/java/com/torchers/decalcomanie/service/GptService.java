@@ -140,25 +140,31 @@ public class GptService {
     private String buildGeminiMemoryPrompt(String name, String candidateText) {
         String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
         return String.format("""
-            아래 카카오톡 대화에서 '%s'에 대한 사실을 뽑아줘.
-            오늘은 %s야.
+            카카오톡 대화에서 '%s'에 대한 기억을 뽑아줘. 오늘은 %s야.
 
             대화:
             %s
 
-            지시사항:
-            1. '%s'가 직접 한 말에서만 사실 추출 (다른 사람 말은 맥락 참고용)
-            2. 한 줄에 하나씩만 써
-            3. 각 줄은 반드시 "~했음" 또는 "~인 것 같음"으로 끝내
-            4. 대화 앞에 [날짜]가 있으면 그 날짜를 기준으로 "작년에", "몇 달 전에", "최근에" 같은 시간 표현 포함
-            5. 첫 줄부터 바로 사실 나열 (인트로, 제목, 번호 없이)
-            6. 최대 15줄
-            7. 구체적으로: 날짜/시기, 장소, 사람, 사건 포함
+            아래 3종류를 합쳐서 총 15개 이내로 뽑아:
 
-            출력 예시:
-            작년 3월에 시험 기간이라 공부 중이었음
-            2개월 전에 친구랑 카페에서 만났음
-            최근에 취업 준비 중인 것 같음
+            종류1 — 구체적 사건/경험
+            (언제, 어디서, 뭘 했는지. [날짜] 있으면 "작년에", "몇 달 전에" 같은 표현 포함)
+            예: 작년 겨울에 시험 준비로 한 달 내내 힘들어했음
+            예: 2개월 전에 친구들이랑 홍대 맛집 다녀왔음
+
+            종류2 — 이 사람만의 습관/특징
+            (반복적으로 보이는 행동 패턴이나 성격)
+            예: 새벽에 갑자기 연락 오는 편임
+            예: 계획 세워두고 자주 취소하는 경향 있음
+
+            종류3 — 둘 사이 에피소드
+            (대화 상대와 있었던 특별한 일)
+            예: 같이 여행 계획 짰다가 취소된 적 있음
+
+            규칙:
+            - '%s'가 직접 한 말 기준으로만 (상대방 말은 맥락)
+            - 첫 줄부터 바로 내용 (제목, 번호, 기호 없이)
+            - 한 줄에 하나씩, "~했음" / "~함" 형태로 끝
             """, name, today, candidateText, name);
     }
 
@@ -179,8 +185,7 @@ public class GptService {
         }
     }
 
-    public String chat(Persona persona, List<ChatMessage> history, String userMessage,
-                       String nickname, List<ConversationTurn> allTurns) {
+    public String chat(Persona persona, List<ChatMessage> history, String userMessage, String nickname) {
         List<ChatMessage> recent = history.size() > 20
             ? history.subList(history.size() - 20, history.size())
             : history;
@@ -205,12 +210,11 @@ public class GptService {
             systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 대화에서 자연스럽게 불러.";
         }
 
-        // RAG: 현재 메시지 키워드로 관련 과거 대화 검색 → 시스템 프롬프트에 동적 주입
-        if (allTurns != null && !allTurns.isEmpty()) {
-            String ragContext = buildRagContext(persona.getName(), userMessage, allTurns);
-            if (!ragContext.isBlank()) {
-                systemPrompt += "\n\n[지금 대화와 관련된 과거 실제 대화 — 자연스럽게 참고해]\n"
-                    + ragContext;
+        // 주제별 RAG: 미리 인덱싱된 topic exchanges에서 관련 대화 주입
+        if (persona.getTopicExchanges() != null && !persona.getTopicExchanges().isEmpty()) {
+            String topicCtx = buildTopicContext(userMessage, persona.getTopicExchanges());
+            if (!topicCtx.isBlank()) {
+                systemPrompt += "\n\n[이 주제 관련 과거 실제 대화 — 자연스럽게 참고]\n" + topicCtx;
             }
         }
 
@@ -239,58 +243,33 @@ public class GptService {
         );
     }
 
-    // ── RAG: 키워드 기반 과거 대화 검색 ─────────────────────
+    // ── 주제 기반 RAG (분석 시점에 미리 인덱싱된 exchanges 활용) ──────
 
-    private String buildRagContext(String name, String userMessage, List<ConversationTurn> turns) {
-        List<String> keywords = extractKeywords(userMessage);
-        if (keywords.isEmpty()) return "";
+    private static final Map<String, String[]> TOPIC_KEYWORDS = new LinkedHashMap<>() {{
+        put("음식",    new String[]{"밥", "먹", "식당", "카페", "커피", "치킨", "라면", "배고", "맛있", "배달"});
+        put("공부/학교", new String[]{"시험", "과제", "수업", "학교", "공부", "성적", "교수"});
+        put("일/직장", new String[]{"회사", "업무", "퇴근", "출근", "야근", "회의"});
+        put("운동",    new String[]{"운동", "헬스", "달리기", "다이어트", "탁구", "축구"});
+        put("여행",    new String[]{"여행", "갔다", "다녀왔", "놀러"});
+        put("게임",    new String[]{"게임", "롤", "배그", "스팀"});
+        put("건강",    new String[]{"아프", "병원", "약", "감기", "열나"});
+        put("연애",    new String[]{"좋아", "사귀", "헤어", "남친", "여친", "썸"});
+    }};
 
-        // 각 turn에 키워드 점수 매기기
-        Map<Integer, Integer> scores = new HashMap<>();
-        for (int i = 0; i < turns.size(); i++) {
-            String msg = turns.get(i).getMessage();
-            int score = 0;
-            for (String kw : keywords) {
-                if (msg.contains(kw)) score++;
-            }
-            if (score > 0) scores.put(i, score);
+    private String buildTopicContext(String userMessage, Map<String, List<String>> topicExchanges) {
+        for (Map.Entry<String, String[]> entry : TOPIC_KEYWORDS.entrySet()) {
+            String topic = entry.getKey();
+            String[] kws = entry.getValue();
+            boolean matched = Arrays.stream(kws).anyMatch(userMessage::contains);
+            if (!matched) continue;
+
+            List<String> exchanges = topicExchanges.get(topic);
+            if (exchanges == null || exchanges.isEmpty()) continue;
+
+            return exchanges.stream()
+                .limit(3)
+                .collect(Collectors.joining("\n\n"));
         }
-
-        if (scores.isEmpty()) return "";
-
-        // 점수 높은 top 3, ±2턴 컨텍스트 붙여서 반환
-        return scores.entrySet().stream()
-            .sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed())
-            .limit(3)
-            .map(e -> {
-                int idx = e.getKey();
-                StringBuilder ctx = new StringBuilder();
-                for (int j = Math.max(0, idx - 2); j <= Math.min(turns.size() - 1, idx + 2); j++) {
-                    ConversationTurn t = turns.get(j);
-                    String msg = t.getMessage().length() > 60
-                        ? t.getMessage().substring(0, 60) + ".."
-                        : t.getMessage();
-                    ctx.append(t.getSender()).append(": ").append(msg).append("\n");
-                }
-                return ctx.toString().trim();
-            })
-            .collect(java.util.stream.Collectors.joining("\n---\n"));
-    }
-
-    private static final Set<String> STOP_WORDS = Set.of(
-        "이야", "나는", "우리", "그게", "이게", "뭐야", "어디", "지금", "그냥",
-        "진짜", "이거", "그거", "이런", "그런", "어떤", "되게", "너무", "정말",
-        "있어", "없어", "해줘", "할게", "한거", "하는", "하고", "해서", "했어",
-        "근데", "그리고", "그래서", "하지만", "아니", "맞아", "그럼", "그래"
-    );
-
-    private List<String> extractKeywords(String text) {
-        List<String> words = new ArrayList<>();
-        Matcher m = Pattern.compile("[가-힣]{2,}").matcher(text);
-        while (m.find()) {
-            String w = m.group();
-            if (!STOP_WORDS.contains(w)) words.add(w);
-        }
-        return words;
+        return "";
     }
 }
