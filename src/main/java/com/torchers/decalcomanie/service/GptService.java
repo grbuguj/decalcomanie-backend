@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -162,9 +163,8 @@ public class GptService {
     }
 
     public String greet(Persona persona, String nickname) {
-        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
         String systemPrompt = persona.getSystemPrompt()
-            + "\n\n오늘은 " + today + "이야. 기억 속 날짜와 비교해서 '작년에', '저번 달에', '요즘' 같은 시간 표현을 자연스럽게 써.";
+            + "\n\n" + buildTimeContext();
         if (nickname != null && !nickname.isBlank()) {
             systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 자연스럽게 불러도 돼.";
         }
@@ -198,10 +198,9 @@ public class GptService {
             "parts", List.of(Map.of("text", userMessage))
         ));
 
-        // 오늘 날짜 + 닉네임 → 시스템 프롬프트에 추가
-        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
+        // 날짜/시간 + 닉네임 → 시스템 프롬프트에 추가
         String systemPrompt = persona.getSystemPrompt()
-            + "\n\n오늘은 " + today + "이야. 기억 속 날짜와 비교해서 '작년에', '저번 달에', '요즘' 같은 시간 표현을 자연스럽게 써.";
+            + "\n\n" + buildTimeContext();
         if (nickname != null && !nickname.isBlank()) {
             systemPrompt += "\n상대방 이름은 '" + nickname + "'이야. 대화에서 자연스럽게 불러.";
         }
@@ -222,7 +221,51 @@ public class GptService {
         }
     }
 
-    // ── RAG: 키워드 기반 과거 대화 검색 ───────────────────
+    // ── 현재 날짜/시간 컨텍스트 생성 ─────────────────────
+
+    private String buildTimeContext() {
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
+        LocalTime now = LocalTime.now();
+        int hour = now.getHour();
+        String ampm = hour < 12 ? "오전" : "오후";
+        int displayHour = hour % 12 == 0 ? 12 : hour % 12;
+        String currentTime = ampm + " " + displayHour + "시";
+
+        String timeSlot;
+        String timeBehavior;
+        if (hour >= 0 && hour < 5) {
+            timeSlot = "새벽";
+            timeBehavior = "새벽이라 졸리거나 멍한 느낌. '야 지금 몇시야', '나 곧 자야 해', '이 시간에 뭐해' 같은 반응 자연스러움.";
+        } else if (hour < 9) {
+            timeSlot = "이른 아침";
+            timeBehavior = "막 일어났거나 출근/등교 준비 중. '아침부터 뭐야ㅋㅋ', '나 이제 일어남', '밥 먹어?' 같은 반응 자연스러움.";
+        } else if (hour < 12) {
+            timeSlot = "오전";
+            timeBehavior = "활동 시작. 평소처럼 대화하면 됨.";
+        } else if (hour < 14) {
+            timeSlot = "점심";
+            timeBehavior = "점심 시간대. '밥 먹었어?', '뭐 먹었어', '나 지금 밥 먹는 중' 같은 말 자연스러움.";
+        } else if (hour < 18) {
+            timeSlot = "오후";
+            timeBehavior = "평소처럼 대화하면 됨.";
+        } else if (hour < 21) {
+            timeSlot = "저녁";
+            timeBehavior = "하루 마무리. '밥 먹었어?', '오늘 어땠어', '피곤하다' 같은 말 자연스러움.";
+        } else if (hour < 24) {
+            timeSlot = "밤";
+            timeBehavior = "쉬거나 취침 준비 중. '나 곧 자야 해', '피곤해 죽겠다', '오늘 하루 힘들었다' 류 반응 자연스러움.";
+        } else {
+            timeSlot = "밤";
+            timeBehavior = "취침 시간대.";
+        }
+
+        return String.format(
+            "오늘은 %s, 지금은 %s(%s)이야.\n%s\n기억 속 날짜와 비교해서 '작년에', '저번 달에', '요즘' 같은 시간 표현도 자연스럽게 써.",
+            today, currentTime, timeSlot, timeBehavior
+        );
+    }
+
+    // ── RAG: 키워드 기반 과거 대화 검색 ─────────────────────
 
     private String buildRagContext(String name, String userMessage, List<ConversationTurn> turns) {
         List<String> keywords = extractKeywords(userMessage);
