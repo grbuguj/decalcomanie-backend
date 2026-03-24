@@ -219,7 +219,7 @@ public class GptService {
         if (persona.getTopicExchanges() != null && !persona.getTopicExchanges().isEmpty()) {
             String topicCtx = buildTopicContext(userMessage, persona.getTopicExchanges());
             if (!topicCtx.isBlank()) {
-                systemPrompt += "\n\n[이 주제 관련 과거 실제 대화 — 자연스럽게 참고]\n" + topicCtx;
+                systemPrompt += "\n\n[과거 대화 참고 — 맥락 파악용. 이 내용을 직접 꺼내거나 언급하지 마. 상대가 먼저 꺼낼 때만 반응.]\n" + topicCtx;
             }
         }
 
