@@ -535,14 +535,10 @@ public class PersonaAnalysisService {
         Map<String, List<String>> situationalPairs,
         List<String> recentSamples, List<String> memories, String mbti
     ) {
-        String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
-        String mbtiStyle = mbtiToConversationStyle(mbti);
-
-        // ① 상황별 대화 예시 — 이 사람 응답이 긴 것(알차 예시) 우선 정렬 후 추출
+        // 예시: 응답 긴 것 10개 + 짧은 것 5개 + 최근 샘플 5개 = 총 20개
         List<String> allPairs = situationalPairs.values().stream()
             .flatMap(List::stream)
             .sorted((a, b) -> {
-                // 페르소나 응답 줄(마지막 줄) 길이 기준 내림차순
                 String lastA = a.contains("\n") ? a.substring(a.lastIndexOf('\n') + 1) : a;
                 String lastB = b.contains("\n") ? b.substring(b.lastIndexOf('\n') + 1) : b;
                 return Integer.compare(lastB.length(), lastA.length());
@@ -550,68 +546,37 @@ public class PersonaAnalysisService {
             .collect(Collectors.toList());
 
         StringBuilder pairsBuilder = new StringBuilder();
-        // 알찬 예시(페르소나 응답 10자 이상) 최대 20개 먼저
         allPairs.stream()
-            .filter(p -> {
-                String last = p.contains("\n") ? p.substring(p.lastIndexOf('\n') + 1) : p;
-                return last.length() >= 10;
-            })
-            .limit(20)
+            .filter(p -> { String l = p.contains("\n") ? p.substring(p.lastIndexOf('\n')+1) : p; return l.length() >= 10; })
+            .limit(10)
             .forEach(p -> pairsBuilder.append(p).append("\n\n"));
-        // 나머지 짧은 예시 최대 12개
         allPairs.stream()
-            .filter(p -> {
-                String last = p.contains("\n") ? p.substring(p.lastIndexOf('\n') + 1) : p;
-                return last.length() < 10;
-            })
-            .limit(12)
+            .filter(p -> { String l = p.contains("\n") ? p.substring(p.lastIndexOf('\n')+1) : p; return l.length() < 10; })
+            .limit(5)
             .forEach(p -> pairsBuilder.append(p).append("\n\n"));
-        // 최근 메시지 샘플 10개
-        recentSamples.stream().limit(10)
+        recentSamples.stream().limit(5)
             .forEach(m -> pairsBuilder.append(name).append(": ").append(m).append("\n"));
         String examplesText = pairsBuilder.length() == 0 ? "(예시 없음)" : pairsBuilder.toString().trim();
 
-        // ② 기억
         String memoryText = memories.isEmpty() ? "(없음)"
             : memories.stream().map(m -> "• " + m).collect(Collectors.joining("\n"));
 
         return String.format("""
-            너는 '%s'야. 지금부터 그 사람 그 자체로 대화해.
+            너는 '%s'야.
 
-            ══ 이 사람의 실제 대화 ══
-            (아래가 핵심이야. 이 사람이 실제로 어떻게 말하는지 — 에너지, 말투, 길이 전부 그대로.)
-
+            [실제 대화 — 말투·에너지 그대로 따라해]
             %s
 
-            ══ 알고 있는 것들 ══
+            [알고 있는 것들]
             %s
 
-            ══ 성격 요약 ══
-            말투: %s / 자주 쓰는 말: %s
-            종결어미: %s / 타이핑: %s
-            성격(MBTI %s): %s
+            [출력] 1~3개 메시지를 |||로 구분, 한 줄로.
+            예: "ㅋㅋ 진짜?|||나도 그런 적 있는데|||어떻게 됐어"
 
-            ══ 출력 형식 (필수) ══
-            카카오톡처럼 메시지를 1~3개로 나눠서 |||로 구분해 출력해.
-            한 줄로만, 줄바꿈 없이.
-            예: "ㅋㅋ 진짜?|||나도 그런 적 있는데 솔직히|||어떻게 됐어 그래서"
-
-            ══ 핵심 규칙 ══
-            1. 위 실제 대화처럼만 말해. 말투·에너지·리액션 전부 그대로.
-            2. 대화 = 리액션 + 자기 얘기. 질문은 보조.
-               리액션하고, 자기 얘기 끼워넣고, 그 다음에 자연스러우면 질문.
-            3. 절대 금지:
-               - 연속으로 질문 2개 이상
-               - "뭐 물어볼 것 없어?" 같은 말
-               - 단답 질문만 반복 ("롤체?" "왜?" "밥은?")
-            4. 상대가 꺼내지 않은 새 주제 갑자기 꺼내지 마.
-            5. 기억에 없는 것은 만들어내지 마. 확실하지 않으면 흘려.
+            [해야 할 것] 리액션 + 자기 얘기 위주. 질문은 자연스러울 때만.
+            [절대 금지] 연속 질문 2개↑ | "뭐 물어볼 것 없어?" | 새 주제 먼저 꺼내기 | 기억 날조 | AI처럼 설명
             """,
-            name,
-            examplesText,
-            memoryText,
-            speechStyle, phraseStr, endingStyle, typingHabits,
-            mbti, mbtiStyle
+            name, examplesText, memoryText
         );
     }
 
