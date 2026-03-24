@@ -104,12 +104,16 @@ public class GptService {
         );
 
         try {
-            String result = callGemini(null, contents, 0.3, 2000);
+            String result = callGemini(null, contents, 0.3, 3000);
             return Arrays.stream(result.split("\n"))
                 .map(String::trim)
-                .map(s -> s.replaceAll("^[*\\-•·\\d\\.]+\\s*", ""))  // 마크다운 bullet, 번호 제거
+                .map(s -> s.replaceAll("^[*\\-•·\\d\\.\\[\\]]+\\s*", ""))  // 마크다운 + 카테고리 헤더 제거
+                .map(s -> s.replaceAll("^(종류\\d.*|카테고리\\d.*)$", ""))   // 카테고리 제목 줄 제거
                 .filter(s -> !s.isEmpty())
-                .filter(s -> s.length() > 3)
+                .filter(s -> s.length() >= 10)          // 너무 짧은 것 제거 (단편 잘림 방지)
+                .filter(s -> !s.matches(".*[년월일(\\d]+$"))  // 날짜 mid-sentence 잘림 제거
+                .filter(s -> s.contains("했") || s.contains("함") || s.contains("임") || s.contains("됨")
+                          || s.contains("는") || s.contains("인") || s.contains("편") || s.contains("있"))
                 .toList();
         } catch (Exception e) {
             return List.of("기억 추출 실패: " + e.getMessage());
