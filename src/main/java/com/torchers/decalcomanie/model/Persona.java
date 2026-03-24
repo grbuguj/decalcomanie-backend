@@ -14,5 +14,6 @@ public class Persona {
     private List<String> commonPhrases;
     private String endingPatterns;
     private List<String> memories;      // 실제 대화에서 추출한 사건/기억
+    private String mbti;               // 대화 패턴 기반 추정 MBTI
     private String systemPrompt;
 }

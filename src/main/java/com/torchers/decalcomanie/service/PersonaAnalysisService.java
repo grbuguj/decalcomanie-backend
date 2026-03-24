@@ -42,12 +42,14 @@ public class PersonaAnalysisService {
         List<String> memories = candidates.isEmpty() ? List.of()
             : gptService.extractMemories(name, candidates);
 
+        String mbti = estimateMbti(myMessages, orderedTurns, name);
+
         boolean isGemini = modelName != null && modelName.toLowerCase().contains("gemini");
         String systemPrompt = isGemini
             ? buildGeminiSystemPrompt(name, speechStyle, avgLength, phrases, endings,
-                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories)
+                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories, mbti)
             : buildSystemPrompt(name, speechStyle, avgLength, phrases, endings,
-                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories);
+                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories, mbti);
 
         return Persona.builder()
             .name(name)
@@ -56,6 +58,7 @@ public class PersonaAnalysisService {
             .commonPhrases(phrases)
             .endingPatterns(endings)
             .memories(memories)
+            .mbti(mbti)
             .systemPrompt(systemPrompt)
             .build();
     }
@@ -266,6 +269,84 @@ public class PersonaAnalysisService {
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "..";
     }
 
+    // ── MBTI 추정 ────────────────────────────────────────────
+
+    private String estimateMbti(List<String> messages, List<ConversationTurn> turns, String name) {
+        // E/I: 대화 첫 발화자 빈도 (외향 = 먼저 말 자주 검)
+        long initiatedCount = 0;
+        if (turns != null) {
+            for (int i = 0; i < turns.size(); i++) {
+                if (turns.get(i).getSender().equals(name)) {
+                    if (i == 0 || !turns.get(i - 1).getSender().equals(name)) {
+                        initiatedCount++;
+                    }
+                }
+            }
+        }
+        long totalMyTurns = turns == null ? 1 :
+            turns.stream().filter(t -> t.getSender().equals(name)).count();
+        double initiateRatio = totalMyTurns > 0 ? (double) initiatedCount / totalMyTurns : 0.5;
+        char ei = initiateRatio > 0.45 ? 'E' : 'I';
+
+        // N/S: 추상적 vs 구체적
+        long nCount = messages.stream().filter(m ->
+            m.contains("느낌") || m.contains("생각") || m.contains("것 같") ||
+            m.contains("왠지") || m.contains("뭔가") || m.contains("아마")).count();
+        long sCount = messages.stream().filter(m ->
+            m.contains("오늘") || m.contains("내일") || m.contains("어제") ||
+            m.contains("몇 시") || m.contains("어디") || m.contains("얼마")).count();
+        char ns = nCount >= sCount ? 'N' : 'S';
+
+        // T/F: 논리 vs 감성
+        long tCount = messages.stream().filter(m ->
+            m.contains("왜냐") || m.contains("그래서") || m.contains("따라서") ||
+            m.contains("분석") || m.contains("이유") || m.contains("논리")).count();
+        long fCount = messages.stream().filter(m ->
+            m.contains("ㅠ") || m.contains("보고싶") || m.contains("힘들") ||
+            m.contains("속상") || m.contains("행복") || m.contains("슬프")).count();
+        char tf = fCount > tCount ? 'F' : 'T';
+
+        // J/P: 계획 vs 즉흥
+        long jCount = messages.stream().filter(m ->
+            m.contains("계획") || m.contains("일정") || m.contains("정해") ||
+            m.contains("준비") || m.contains("미리") || m.contains("스케줄")).count();
+        long pCount = messages.stream().filter(m ->
+            m.contains("즉흥") || m.contains("갑자기") || m.contains("그냥") ||
+            m.contains("나중에") || m.contains("뭐든") || m.contains("대충")).count();
+        char jp = jCount > pCount ? 'J' : 'P';
+
+        return "" + ei + ns + tf + jp;
+    }
+
+    private String mbtiToConversationStyle(String mbti) {
+        if (mbti == null || mbti.length() != 4) return "";
+        List<String> traits = new ArrayList<>();
+
+        if (mbti.charAt(0) == 'E') {
+            traits.add("대화를 주도하고 먼저 화제를 꺼내는 편");
+            traits.add("자기 얘기를 자주 꺼냄");
+        } else {
+            traits.add("필요한 말만 하고 많이 물어보지 않는 편");
+            traits.add("상대가 말하면 받아치는 스타일");
+        }
+        if (mbti.charAt(1) == 'N') {
+            traits.add("'뭔가 그런 느낌이야', '왠지 모르게' 같은 감각적 표현 자주 씀");
+        } else {
+            traits.add("구체적 사실 위주로 얘기함 (날짜, 장소, 숫자)");
+        }
+        if (mbti.charAt(2) == 'F') {
+            traits.add("감정 공감을 자주 함, '맞아 나도', '그러게' 같은 반응");
+        } else {
+            traits.add("감정보다 팩트로 반응, 해결책 제시 경향");
+        }
+        if (mbti.charAt(3) == 'P') {
+            traits.add("'그냥', '갑자기', '나중에' 같은 즉흥적 표현 자주 씀");
+        } else {
+            traits.add("계획적인 표현 자주 씀, 정리하려는 경향");
+        }
+        return String.join("\n", traits);
+    }
+
     // ── Gemini 전용 시스템 프롬프트 ─────────────────────────
 
     private String buildGeminiSystemPrompt(
@@ -273,7 +354,7 @@ public class PersonaAnalysisService {
         List<String> phrases, String endings,
         String reactionStyle, String emotionStyle,
         List<String> conversationPairs, List<String> recentSamples,
-        List<String> memories
+        List<String> memories, String mbti
     ) {
         String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
 
@@ -297,6 +378,8 @@ public class PersonaAnalysisService {
         String fewShot = conversationPairs.stream().limit(3)
             .collect(Collectors.joining("\n---\n"));
 
+        String mbtiStyle = mbtiToConversationStyle(mbti);
+
         return String.format("""
             너는 지금부터 '%s'야. AI가 아니라 실제 그 사람이야.
 
@@ -304,6 +387,9 @@ public class PersonaAnalysisService {
             스타일: %s, 길이: %s
             자주 쓰는 말: %s
             특징: %s
+
+            [%s의 성격 — MBTI %s 추정]
+            %s
 
             [실제 대화 예시 - 이렇게 말하는 사람이야]
             %s
@@ -322,14 +408,17 @@ public class PersonaAnalysisService {
             4. AI처럼 설명하거나 도움 주려 하지 마.
             5. 이상한 질문엔 "갑자기?", "그게 뭔 소리야", "ㅋㅋ 뭐래" 식으로 반응.
             6. 과거 얘기 나오면 기억 참고해서 자연스럽게 반응.
-            7. 존댓말/반말은 위 스타일대로만.
-            8. 절대 AI라고 밝히지 마.
+            7. 성격에 맞게 자연스럽게 역질문도 던지고, 자기 얘기도 끼워넣어.
+               예: "근데 너는?", "나도 그런 적 있는데", "갑자기 생각났는데"
+            8. 존댓말/반말은 위 스타일대로만.
+            9. 절대 AI라고 밝히지 마.
 
             [좋은 예 vs 나쁜 예]
             나쁜 예: "어" / "응" / "네, 맞습니다" / "저는 AI입니다"
-            좋은 예: "어 왜ㅋㅋ" / "ㅇㅇ 근데 그게" / "모르겠는데 왜" / "갑자기 뭔 소리야"
+            좋은 예: "어 왜ㅋㅋ" / "ㅇㅇ 근데 그게" / "모르겠는데 왜" / "갑자기 뭔 소리야" / "나도 그거 궁금했는데"
             """,
             name, name, speechStyle, avgLength, phraseStr, endings,
+            name, mbti, mbtiStyle,
             pairsText.isEmpty() ? fewShot : pairsText,
             samplesText, memoryText
         );
@@ -342,7 +431,7 @@ public class PersonaAnalysisService {
         List<String> phrases, String endings,
         String reactionStyle, String emotionStyle,
         List<String> conversationPairs, List<String> recentSamples,
-        List<String> memories
+        List<String> memories, String mbti
     ) {
         String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
 
@@ -364,6 +453,8 @@ public class PersonaAnalysisService {
             : memories.stream().map(m -> "  • " + m)
                 .collect(Collectors.joining("\n"));
 
+        String mbtiStyle = mbtiToConversationStyle(mbti);
+
         return String.format("""
             당신은 '%s'입니다. 롤플레이가 아니라 진짜 그 사람입니다.
             어떤 질문이 와도 그 사람으로서 즉각 반응하세요.
@@ -374,6 +465,10 @@ public class PersonaAnalysisService {
             - 자주 쓰는 표현: %s
             - 문장 패턴: %s
             - 반응 방식: %s / 감정: %s
+
+            ━━━━━━━━━━━━━━━━━━━━━
+            [성격 — MBTI %s 추정]
+            %s
 
             ━━━━━━━━━━━━━━━━━━━━━
             [실제 대화 패턴 — 이 사람의 실제 반응]
@@ -400,12 +495,15 @@ public class PersonaAnalysisService {
             5. 갑작스럽거나 이상한 질문엔 당황하거나 무시하거나 딴말로 반응하세요.
                예: "갑자기?", "그게 뭔 소리야", "몰라 나한테 왜 물어봐", "ㅋㅋ 뭐래"
             6. 과거 사건을 물으면 기억을 참고해 자연스럽게 반응하세요.
-            7. 모르는 건 "모르겠는데" 식으로, 그 사람 말투로 답하세요.
-            8. 과하게 친절하거나 공감하거나 감성적으로 굴지 마세요.
-            9. 존댓말/반말은 위 스타일 그대로 유지하세요.
+            7. 성격에 맞게 자연스럽게 역질문도 던지고, 자기 얘기도 끼워넣으세요.
+               예: "근데 너는?", "나도 그런 적 있는데", "갑자기 생각났는데"
+            8. 모르는 건 "모르겠는데" 식으로, 그 사람 말투로 답하세요.
+            9. 과하게 친절하거나 공감하거나 감성적으로 굴지 마세요.
+            10. 존댓말/반말은 위 스타일 그대로 유지하세요.
             """,
             name, speechStyle, avgLength, phraseStr, endings,
             reactionStyle, emotionStyle,
+            mbti, mbtiStyle,
             pairsText, samplesText, memoryText, name, name
         );
     }
