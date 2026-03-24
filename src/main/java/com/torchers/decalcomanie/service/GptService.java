@@ -10,6 +10,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -142,7 +143,7 @@ public class GptService {
     }
 
     private String buildGeminiMemoryPrompt(String name, String candidateText) {
-        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
+        String today = LocalDate.now(KST).format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
         return String.format("""
             카카오톡 대화에서 '%s'에 대한 기억을 뽑아줘. 오늘은 %s야.
 
@@ -231,9 +232,11 @@ public class GptService {
 
     // ── 현재 날짜/시간 컨텍스트 생성 ─────────────────────
 
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
     private String buildTimeContext() {
-        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
-        LocalTime now = LocalTime.now();
+        String today = LocalDate.now(KST).format(DateTimeFormatter.ofPattern("yyyy년 M월 d일"));
+        LocalTime now = LocalTime.now(KST);
         int hour = now.getHour();
         String ampm = hour < 12 ? "오전" : "오후";
         int displayHour = hour % 12 == 0 ? 12 : hour % 12;

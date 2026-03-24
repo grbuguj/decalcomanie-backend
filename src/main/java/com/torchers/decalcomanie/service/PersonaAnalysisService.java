@@ -395,12 +395,11 @@ public class PersonaAnalysisService {
 
         if (orderedTurns != null) {
             int total = orderedTurns.size();
-            // 최근 200턴 (가장 최신) + 그 전 300턴 (약 1-2년치)
             List<ConversationTurn> windowRecent = orderedTurns.subList(Math.max(0, total - 200), total);
-            List<ConversationTurn> windowMid    = orderedTurns.subList(Math.max(0, total - 500), Math.max(0, total - 200));
+            List<ConversationTurn> windowOld    = orderedTurns.subList(Math.max(0, total - 1000), Math.max(0, total - 200));
 
             collectEvents(targetName, windowRecent, eventKeywords, 20, candidates);
-            collectEvents(targetName, windowMid,    eventKeywords, 10, candidates);
+            collectEvents(targetName, windowOld,    eventKeywords, 10, candidates);
         }
 
         // 최근 발화 샘플 — 의미있는 문장만 (단편 제외)
