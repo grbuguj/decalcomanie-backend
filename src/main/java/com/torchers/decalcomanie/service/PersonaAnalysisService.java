@@ -14,6 +14,9 @@ public class PersonaAnalysisService {
 
     private final GptService gptService;
 
+    @org.springframework.beans.factory.annotation.Value("${gemini.api.model:}")
+    private String modelName;
+
     public Persona analyze(String name, List<String> myMessages,
                             Map<String, List<String>> allMessages,
                             List<ConversationTurn> orderedTurns) {
@@ -39,10 +42,12 @@ public class PersonaAnalysisService {
         List<String> memories = candidates.isEmpty() ? List.of()
             : gptService.extractMemories(name, candidates);
 
-        String systemPrompt = buildSystemPrompt(
-            name, speechStyle, avgLength, phrases, endings,
-            reactionStyle, emotionStyle, conversationPairs, recentSamples, memories
-        );
+        boolean isGemini = modelName != null && modelName.toLowerCase().contains("gemini");
+        String systemPrompt = isGemini
+            ? buildGeminiSystemPrompt(name, speechStyle, avgLength, phrases, endings,
+                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories)
+            : buildSystemPrompt(name, speechStyle, avgLength, phrases, endings,
+                reactionStyle, emotionStyle, conversationPairs, recentSamples, memories);
 
         return Persona.builder()
             .name(name)
@@ -261,7 +266,76 @@ public class PersonaAnalysisService {
         return s.length() <= maxLen ? s : s.substring(0, maxLen) + "..";
     }
 
-    // ── 시스템 프롬프트 빌더 ────────────────────────────────
+    // ── Gemini 전용 시스템 프롬프트 ─────────────────────────
+
+    private String buildGeminiSystemPrompt(
+        String name, String speechStyle, String avgLength,
+        List<String> phrases, String endings,
+        String reactionStyle, String emotionStyle,
+        List<String> conversationPairs, List<String> recentSamples,
+        List<String> memories
+    ) {
+        String phraseStr = phrases.isEmpty() ? "없음" : String.join(", ", phrases);
+
+        String pairsText = conversationPairs.isEmpty()
+            ? "(대화 쌍 없음)"
+            : conversationPairs.stream()
+                .limit(20)
+                .collect(Collectors.joining("\n\n"));
+
+        String samplesText = recentSamples.isEmpty()
+            ? "(없음)"
+            : recentSamples.stream().limit(15).map(m -> "\"" + m + "\"")
+                .collect(Collectors.joining("\n"));
+
+        String memoryText = memories.isEmpty()
+            ? "(없음)"
+            : memories.stream().map(m -> "• " + m)
+                .collect(Collectors.joining("\n"));
+
+        // few-shot 예시 생성 (대화 쌍 앞 3개)
+        String fewShot = conversationPairs.stream().limit(3)
+            .collect(Collectors.joining("\n---\n"));
+
+        return String.format("""
+            너는 지금부터 '%s'야. AI가 아니라 실제 그 사람이야.
+
+            [%s의 말투]
+            스타일: %s, 길이: %s
+            자주 쓰는 말: %s
+            특징: %s
+
+            [실제 대화 예시 - 이렇게 말하는 사람이야]
+            %s
+
+            [최근에 한 말들]
+            %s
+
+            [알고 있는 것들]
+            %s
+
+            [반드시 지킬 규칙]
+            1. 위 대화 예시처럼 말해. 말투, 길이, 어조 그대로.
+            2. 반드시 2어절 이상으로 답해. "어", "응", "ㅇ" 하나만 쓰지 마.
+               단답이라도 "어 왜", "ㅇㅇ 근데", "모르는데" 같이 맥락 붙여.
+            3. 매번 다르게 반응해. 같은 말 반복 금지.
+            4. AI처럼 설명하거나 도움 주려 하지 마.
+            5. 이상한 질문엔 "갑자기?", "그게 뭔 소리야", "ㅋㅋ 뭐래" 식으로 반응.
+            6. 과거 얘기 나오면 기억 참고해서 자연스럽게 반응.
+            7. 존댓말/반말은 위 스타일대로만.
+            8. 절대 AI라고 밝히지 마.
+
+            [좋은 예 vs 나쁜 예]
+            나쁜 예: "어" / "응" / "네, 맞습니다" / "저는 AI입니다"
+            좋은 예: "어 왜ㅋㅋ" / "ㅇㅇ 근데 그게" / "모르겠는데 왜" / "갑자기 뭔 소리야"
+            """,
+            name, name, speechStyle, avgLength, phraseStr, endings,
+            pairsText.isEmpty() ? fewShot : pairsText,
+            samplesText, memoryText
+        );
+    }
+
+    // ── GPT 전용 시스템 프롬프트 빌더 ──────────────────────
 
     private String buildSystemPrompt(
         String name, String speechStyle, String avgLength,

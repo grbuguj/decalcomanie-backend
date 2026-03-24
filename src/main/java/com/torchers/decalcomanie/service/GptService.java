@@ -88,7 +88,30 @@ public class GptService {
             candidateText = candidateText.substring(0, 5000) + "\n(이하 생략)";
         }
 
-        String prompt = String.format("""
+        boolean isGemini = model != null && model.toLowerCase().contains("gemini");
+        String prompt = isGemini
+            ? buildGeminiMemoryPrompt(name, candidateText)
+            : buildGptMemoryPrompt(name, candidateText);
+
+        List<Map<String, Object>> contents = List.of(
+            Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))
+        );
+
+        try {
+            String result = callGemini(null, contents, 0.3, 2000);
+            return Arrays.stream(result.split("\n"))
+                .map(String::trim)
+                .map(s -> s.replaceAll("^[*\\-•·\\d\\.]+\\s*", ""))  // 마크다운 bullet, 번호 제거
+                .filter(s -> !s.isEmpty())
+                .filter(s -> s.length() > 3)
+                .toList();
+        } catch (Exception e) {
+            return List.of("기억 추출 실패: " + e.getMessage());
+        }
+    }
+
+    private String buildGptMemoryPrompt(String name, String candidateText) {
+        return String.format("""
             [대화 발췌]
             %s
 
@@ -106,21 +129,28 @@ public class GptService {
             - 최근 사건 우선
             - 구체적 사건(언제, 무엇을) 위주
             """, candidateText, name, name);
+    }
 
-        List<Map<String, Object>> contents = List.of(
-            Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))
-        );
+    private String buildGeminiMemoryPrompt(String name, String candidateText) {
+        return String.format("""
+            아래 카카오톡 대화에서 '%s'에 대한 사실을 뽑아줘.
 
-        try {
-            String result = callGemini(null, contents, 0.3, 1000);
-            return Arrays.stream(result.split("\n"))
-                .map(String::trim)
-                .map(s -> s.replaceAll("^[*\\-•·]\\s*", ""))  // 마크다운 bullet 제거
-                .filter(s -> !s.isEmpty())
-                .toList();
-        } catch (Exception e) {
-            return List.of("기억 추출 실패: " + e.getMessage());
-        }
+            대화:
+            %s
+
+            지시사항:
+            1. '%s'가 직접 한 말에서만 사실 추출 (다른 사람 말은 맥락 참고용)
+            2. 한 줄에 하나씩만 써
+            3. 각 줄은 반드시 "~했음" 또는 "~인 것 같음"으로 끝내
+            4. 첫 줄부터 바로 사실 나열 (인트로, 제목, 번호 없이)
+            5. 최대 15줄
+            6. 구체적으로: 장소, 사람, 사건 포함
+
+            출력 예시:
+            시험 기간이라 공부 중이었음
+            친구랑 카페에서 만났음
+            취업 준비 중인 것 같음
+            """, name, candidateText, name);
     }
 
     public String chat(Persona persona, List<ChatMessage> history, String userMessage) {
@@ -146,7 +176,7 @@ public class GptService {
         ));
 
         try {
-            return callGemini(persona.getSystemPrompt(), contents, 0.75, 800);
+            return callGemini(persona.getSystemPrompt(), contents, 0.75, 1200);
         } catch (Exception e) {
             throw new RuntimeException("Gemini API 호출 실패: " + e.getMessage());
         }
